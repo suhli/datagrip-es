@@ -37,6 +37,9 @@ final class SqlSelectTranslator {
     private static final Pattern COUNT = Pattern.compile(
             "(?is)^\\s*COUNT\\s*\\(\\s*\\*\\s*\\)(?:\\s+(?:AS\\s+)?"
                     + IDENTIFIER + ")?\\s*$");
+    private static final Pattern TABLE_ALIAS = Pattern.compile(
+            "(?is)^\\s+(?:AS\\s+)?(" + IDENTIFIER + ")"
+                    + "(?=\\s+(?:WHERE|ORDER\\s+BY|LIMIT|OFFSET)\\b|\\s*$)(.*)$");
 
     private SqlSelectTranslator() {}
 
@@ -53,6 +56,10 @@ final class SqlSelectTranslator {
         String index = lastIdentifierPart(select.group(2));
         validateIndex(index);
         String tail = select.group(3);
+        Matcher alias = TABLE_ALIAS.matcher(tail);
+        if (alias.matches() && !isClauseKeyword(alias.group(1))) {
+            tail = alias.group(2);
+        }
 
         int size = maxRows > 0 ? maxRows : fetchSize > 0 ? fetchSize : 500;
         int from = 0;
@@ -168,6 +175,14 @@ final class SqlSelectTranslator {
                 || index.indexOf('#') >= 0) {
             throw new SQLException("Invalid Elasticsearch index name", "42000");
         }
+    }
+
+    private static boolean isClauseKeyword(String value) {
+        String keyword = lastIdentifierPart(value);
+        return keyword.equalsIgnoreCase("WHERE")
+                || keyword.equalsIgnoreCase("ORDER")
+                || keyword.equalsIgnoreCase("LIMIT")
+                || keyword.equalsIgnoreCase("OFFSET");
     }
 
     private static SQLFeatureNotSupportedException unsupportedClause(String clause) {

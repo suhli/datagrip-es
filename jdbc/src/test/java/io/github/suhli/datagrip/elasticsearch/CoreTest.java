@@ -73,6 +73,15 @@ class CoreTest {
         assertEquals(10, body.path("from").asInt());
         assertEquals("desc", body.path("sort").get(0).path("@timestamp").asText());
 
+        var aliased = SqlSelectTranslator.translate(
+                "SELECT t.* FROM \"logs-2026.08.28\" AS t", 0, 0);
+        assertEquals("/logs-2026.08.28/_search", aliased.path());
+        assertEquals(500, JSON.readTree(aliased.body()).path("size").asInt());
+
+        var shortAlias = SqlSelectTranslator.translate(
+                "SELECT t.* FROM \"logs-2026.08.28\" t WHERE status:200", 0, 0);
+        assertTrue(JSON.readTree(shortAlias.body()).path("query").has("match"));
+
         var count = SqlSelectTranslator.translate(
                 "SELECT count(*) AS total FROM `users`", 0, 0);
         assertEquals("GET", count.method());
