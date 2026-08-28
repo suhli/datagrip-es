@@ -142,6 +142,8 @@ final class JdbcProxies {
         final Map<Integer, String> parameters = new HashMap<>();
         Statement self;
         ResultSet current;
+        final List<ResultSet> results = new ArrayList<>();
+        int currentIndex = -1;
         boolean closed;
         boolean closeOnCompletion;
         int maxRows;
@@ -172,7 +174,10 @@ final class JdbcProxies {
                 case "execute" -> { execute(sql(args)); yield true; }
                 case "getResultSet" -> current;
                 case "getUpdateCount" -> -1;
-                case "getMoreResults" -> false;
+                case "getMoreResults" -> advanceResult(
+                        args == null || args.length == 0
+                                ? Statement.CLOSE_CURRENT_RESULT
+                                : (int) args[0]);
                 case "clearParameters" -> { parameters.clear(); yield null; }
                 case "getConnection" -> state.connection;
                 case "clearWarnings", "clearBatch" -> null;
@@ -213,10 +218,26 @@ final class JdbcProxies {
         }
 
         private ResultSet execute(String text) throws SQLException {
-            closeCurrent();
-            RestRequestParser.ParsedRequest request =
+            closeResults();
+            RestRequestParser.ParsedRequest translated =
                     SqlSelectTranslator.translate(text, maxRows, fetchSize);
-            if (request == null) request = RestRequestParser.parse(text);
+            List<RestRequestParser.ParsedRequest> requests = translated == null
+                    ? RestRequestParser.parseAll(text)
+                    : List.of(translated);
+            try {
+                for (RestRequestParser.ParsedRequest request : requests) {
+                    results.add(executeRequest(request));
+                }
+                currentIndex = 0;
+                current = results.get(0);
+                return current;
+            } catch (SQLException e) {
+                closeResults();
+                throw e;
+            }
+        }
+
+        private ResultSet executeRequest(RestRequestParser.ParsedRequest request) throws SQLException {
             URI uri = requestUri(state.config.endpoint(), request.path());
             try {
                 Transport.Response response = state.transport.execute(new Transport.Request(
@@ -228,31 +249,61 @@ final class JdbcProxies {
                         ? new TabularResult(
                                 List.of(new TabularResult.Column("_status", Types.INTEGER, "INTEGER")),
                                 List.of(List.of(response.status())))
-                        : JsonResultMapper.map(response.body());
+                        : JsonResultMapper.mapWithRawResponse(response.body());
                 if (maxRows > 0 && result.rows().size() > maxRows) {
                     result = new TabularResult(result.columns(), result.rows().subList(0, maxRows));
                 }
-                current = resultSet(result, this);
-                return current;
+                return resultSet(result, this);
             } catch (IOException e) {
                 throw new SQLException("Elasticsearch request failed", "08S01", e);
             }
         }
 
-        private void closeCurrent() throws SQLException {
-            if (current != null && !current.isClosed()) current.close();
+        private boolean advanceResult(int behavior) throws SQLException {
+            if (behavior != Statement.CLOSE_CURRENT_RESULT
+                    && behavior != Statement.KEEP_CURRENT_RESULT
+                    && behavior != Statement.CLOSE_ALL_RESULTS) {
+                throw new SQLException("Invalid getMoreResults behavior", "HY092");
+            }
+            if (behavior == Statement.CLOSE_ALL_RESULTS) {
+                for (int i = 0; i <= currentIndex && i < results.size(); i++) {
+                    if (!results.get(i).isClosed()) results.get(i).close();
+                }
+            } else if (behavior == Statement.CLOSE_CURRENT_RESULT
+                    && current != null && !current.isClosed()) {
+                current.close();
+            }
+            currentIndex++;
+            current = currentIndex < results.size() ? results.get(currentIndex) : null;
+            return current != null;
+        }
+
+        private void closeResults() throws SQLException {
+            for (ResultSet result : List.copyOf(results)) {
+                if (!result.isClosed()) result.close();
+            }
+            results.clear();
+            currentIndex = -1;
             current = null;
         }
 
         void resultClosed(ResultSet result) throws SQLException {
             if (current == result) current = null;
-            if (closeOnCompletion) close();
+            if (closeOnCompletion && results.stream().allMatch(StatementHandler::isClosed)) close();
+        }
+
+        private static boolean isClosed(ResultSet result) {
+            try {
+                return result.isClosed();
+            } catch (SQLException ignored) {
+                return true;
+            }
         }
 
         void close() throws SQLException {
             if (closed) return;
             closed = true;
-            closeCurrent();
+            closeResults();
             state.statements.remove(self);
         }
     }

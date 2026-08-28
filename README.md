@@ -78,12 +78,26 @@ GET /my-index/_search
 In the generic DataGrip JDBC console, select the complete request (request line
 and body) before executing it. DataGrip then passes the selected text to
 `Statement.execute`, and the normal Result Grid, copy, and export actions are
-available. One REST request per execution is supported in this release.
+available. Multiple request blocks and `//` or `#` line comments are supported:
+
+```http
+// Search request
+GET /my-index/_search
+{
+  "size": 10
+}
+
+# Cluster status
+GET /_cluster/health
+```
 
 Search hits become rows containing `_index`, `_id`, `_score`, and flattened
 `_source` fields. Typical aggregation buckets, JSON objects, and arrays are
-also tabularized; responses that cannot be flattened safely remain available
-without loss in a `JSON` column.
+also tabularized. Every non-empty response includes a `_response` column with
+the complete JSON payload for DataGrip's text/tree value viewer, so structured
+tabularization never discards aggregation or response metadata. Elasticsearch
+REST Console files use the `.esrest` extension and support method/path/JSON
+syntax highlighting and IDE code formatting.
 
 Opening an index in DataGrip's table data editor uses a local `SELECT` to REST
 translator; it never calls Elasticsearch SQL. Text entered after the grid's

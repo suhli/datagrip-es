@@ -21,6 +21,21 @@
       Keep this compatibility-sensitive integration isolated in this module.
     -->
     <extensions defaultExtensionNs="com.intellij">
+        <fileType
+            name="Elasticsearch REST"
+            language="ElasticsearchREST"
+            implementationClass="io.github.suhli.datagrip.elasticsearch.plugin.language.EsRestFileType"
+            fieldName="INSTANCE"
+            extensions="esrest"/>
+        <lang.parserDefinition
+            language="ElasticsearchREST"
+            implementationClass="io.github.suhli.datagrip.elasticsearch.plugin.language.EsRestParserDefinition"/>
+        <lang.syntaxHighlighterFactory
+            language="ElasticsearchREST"
+            implementationClass="io.github.suhli.datagrip.elasticsearch.plugin.language.EsRestSyntaxHighlighterFactory"/>
+        <lang.formatter
+            language="ElasticsearchREST"
+            implementationClass="io.github.suhli.datagrip.elasticsearch.plugin.language.EsRestFormattingModelBuilder"/>
         <database.driversConfig config="databaseDrivers/elasticsearch-rest.xml"/>
         <postStartupActivity
             implementation="io.github.suhli.datagrip.elasticsearch.plugin.BundledDriverStartupActivity"/>

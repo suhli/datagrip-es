@@ -39,20 +39,37 @@ class CoreTest {
     }
 
     @Test
-    void parsesExactlyOneRestRequest() throws Exception {
+    void parsesCommentsAndMultipleRestRequests() throws Exception {
         var request = RestRequestParser.parse("""
                 POST /index/_search
 
-                {"query":{"term":{"message":"escaped \\"{ value }\\""}}}
+                {
+                  // JSON body comment
+                  "query":{"term":{"message":"escaped \\"{ value }\\""}}
+                }
                 """);
         assertEquals("POST", request.method());
         assertEquals("/index/_search", request.path());
         assertTrue(request.body().contains("{ value }"));
-        assertThrows(SQLException.class,
-                () -> RestRequestParser.parse("GET /a\n{}\nGET /b\n{}"));
-        SQLException multiple = assertThrows(SQLException.class,
-                () -> RestRequestParser.parse("GET /a\n\nGET /b"));
-        assertTrue(multiple.getMessage().contains("Multiple"));
+
+        var requests = RestRequestParser.parseAll("""
+                // first request
+                GET /a // request comment
+
+                # second request
+                POST /b
+                {
+                  "url": "https://example.test/a//b",
+                  # hash comment
+                  "enabled": true
+                }
+                """);
+        assertEquals(2, requests.size());
+        assertEquals("/a", requests.get(0).path());
+        assertEquals("/b", requests.get(1).path());
+        assertTrue(requests.get(1).body().contains("https://example.test/a//b"));
+        assertFalse(requests.get(1).body().contains("hash comment"));
+        assertThrows(SQLException.class, () -> RestRequestParser.parse("GET /a\nGET /b"));
         assertThrows(SQLException.class, () -> RestRequestParser.parse("SELECT * FROM index"));
     }
 
@@ -153,6 +170,17 @@ class CoreTest {
         assertTrue(aggregation.columns().stream().anyMatch(c -> c.label().equals("key")));
         assertTrue(aggregation.columns().stream().anyMatch(c -> c.label().equals("doc_count")));
 
+        String completeJson = """
+                {"aggregations":{"by_level":{"buckets":[{"key":10,"doc_count":100}]}},
+                 "_shards":{"total":2,"successful":2}}
+                """;
+        TabularResult withRaw = JsonResultMapper.mapWithRawResponse(completeJson);
+        int rawColumn = java.util.stream.IntStream.range(0, withRaw.columns().size())
+                .filter(i -> withRaw.columns().get(i).label().equals("_response"))
+                .findFirst().orElseThrow();
+        assertEquals("JSON", withRaw.columns().get(rawColumn).typeName());
+        assertTrue(withRaw.rows().get(0).get(rawColumn).toString().contains("_shards"));
+
         TabularResult generic = JsonResultMapper.map("""
                 [{"name":"A"},{"name":"B","level":null}]
                 """);
@@ -183,6 +211,27 @@ class CoreTest {
                  var rows = statement.executeQuery("GET /users/_search\n{\"size\":1}")) {
                 assertTrue(rows.next());
                 assertEquals("Ada", rows.getString("name"));
+                assertTrue(rows.getString("_response").contains("\"hits\""));
+            }
+            try (var statement = connection.createStatement()) {
+                assertTrue(statement.execute("""
+                        // data
+                        GET /users/_search
+                        {"size": 1}
+
+                        // health
+                        GET /_cluster/health
+                        """));
+                try (var rows = statement.getResultSet()) {
+                    assertTrue(rows.next());
+                    assertEquals("Ada", rows.getString("name"));
+                }
+                assertTrue(statement.getMoreResults());
+                try (var health = statement.getResultSet()) {
+                    assertTrue(health.next());
+                    assertEquals("green", health.getString("status"));
+                }
+                assertFalse(statement.getMoreResults());
             }
         }
         assertTrue(transport.closed);
@@ -227,6 +276,11 @@ class CoreTest {
                 return response("""
                         {"hits":{"hits":[{"_index":"users","_id":"1",
                         "_source":{"name":"Ada"}}]}}
+                        """);
+            }
+            if (path.endsWith("/_cluster/health")) {
+                return response("""
+                        {"cluster_name":"test-cluster","status":"green"}
                         """);
             }
             return new Response(404, Map.of(), "{}");

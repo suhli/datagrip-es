@@ -34,6 +34,27 @@ public final class JsonResultMapper {
         return tabular(records);
     }
 
+    public static TabularResult mapWithRawResponse(String json) throws JsonProcessingException {
+        TabularResult structured = map(json);
+        List<TabularResult.Column> columns = new ArrayList<>(structured.columns());
+        columns.add(new TabularResult.Column("_response", Types.LONGVARCHAR, "JSON"));
+
+        List<List<Object>> rows = new ArrayList<>();
+        if (structured.rows().isEmpty()) {
+            List<Object> row = new ArrayList<>(structured.columns().size() + 1);
+            for (int i = 0; i < structured.columns().size(); i++) row.add(null);
+            row.add(json);
+            rows.add(row);
+        } else {
+            for (int i = 0; i < structured.rows().size(); i++) {
+                List<Object> row = new ArrayList<>(structured.rows().get(i));
+                row.add(i == 0 ? json : null);
+                rows.add(row);
+            }
+        }
+        return new TabularResult(columns, rows);
+    }
+
     private static List<Map<String, Object>> searchHits(JsonNode hits) {
         List<Map<String, Object>> records = new ArrayList<>();
         for (JsonNode hit : hits) {
@@ -55,7 +76,7 @@ public final class JsonResultMapper {
 
     private static void collectBuckets(String prefix, JsonNode node, List<Map<String, Object>> output) {
         if (!node.isObject()) return;
-        node.fields().forEachRemaining(aggregation -> {
+        node.properties().forEach(aggregation -> {
             JsonNode buckets = aggregation.getValue().path("buckets");
             if (buckets.isArray()) {
                 for (JsonNode bucket : buckets) {
@@ -72,7 +93,7 @@ public final class JsonResultMapper {
     }
 
     private static void flattenMetrics(String prefix, JsonNode node, Map<String, Object> row) {
-        node.fields().forEachRemaining(entry -> {
+        node.properties().forEach(entry -> {
             if ("key".equals(entry.getKey()) || "key_as_string".equals(entry.getKey())
                     || "doc_count".equals(entry.getKey())) return;
             JsonNode value = entry.getValue();
@@ -99,7 +120,7 @@ public final class JsonResultMapper {
             target.put(prefix.isEmpty() ? "value" : prefix, scalarOrJson(node));
             return;
         }
-        node.fields().forEachRemaining(entry -> {
+        node.properties().forEach(entry -> {
             String name = prefix.isEmpty() ? entry.getKey() : prefix + "." + entry.getKey();
             JsonNode value = entry.getValue();
             if (value.isObject()) flatten(name, value, target);
