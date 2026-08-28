@@ -6,3 +6,4 @@ out/
 .env
 bin
 .vscode/settings.json
+.intellijPlatform

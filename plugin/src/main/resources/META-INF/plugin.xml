@@ -22,6 +22,7 @@
     -->
     <extensions defaultExtensionNs="com.intellij">
         <database.driversConfig config="databaseDrivers/elasticsearch-rest.xml"/>
-        <database.artifactsConfig config="databaseDrivers/elasticsearch-rest-artifacts.xml"/>
+        <postStartupActivity
+            implementation="io.github.suhli.datagrip.elasticsearch.plugin.BundledDriverStartupActivity"/>
     </extensions>
 </idea-plugin>
