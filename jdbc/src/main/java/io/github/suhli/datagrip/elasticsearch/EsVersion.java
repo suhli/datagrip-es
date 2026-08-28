@@ -6,7 +6,8 @@ import com.fasterxml.jackson.databind.ObjectMapper;
 import java.io.IOException;
 import java.sql.SQLException;
 
-public record EsVersion(String product, String number, String distribution) {
+public record EsVersion(String product, String number, String distribution,
+                        String clusterName, String clusterUuid) {
     private static final ObjectMapper JSON = new ObjectMapper();
 
     public static EsVersion detect(Transport transport, EsJdbcUrl url) throws SQLException {
@@ -20,17 +21,23 @@ public record EsVersion(String product, String number, String distribution) {
             String number = root.path("version").path("number").asText("");
             String distribution = root.path("version").path("distribution").asText("elasticsearch");
             String tagline = root.path("tagline").asText("");
-            if (number.isBlank() || (!tagline.contains("Search") && root.path("version").isMissingNode())) {
+            if (number.isBlank() || !root.path("version").isObject()) {
                 throw new SQLException("Endpoint is not an Elasticsearch-compatible product", "08001");
             }
-            return new EsVersion(root.path("name").asText("Elasticsearch"), number, distribution);
+            boolean openSearch = "opensearch".equalsIgnoreCase(distribution)
+                    || tagline.toLowerCase(java.util.Locale.ROOT).contains("opensearch");
+            String product = openSearch ? "OpenSearch" : "Elasticsearch";
+            return new EsVersion(product, number, distribution,
+                    root.path("cluster_name").asText(product),
+                    root.path("cluster_uuid").asText(""));
         } catch (IOException e) {
             throw new SQLException("Cannot detect Elasticsearch product", "08001", e);
         }
     }
 
     private static String append(String prefix, String path) {
-        return (prefix == null ? "" : prefix) + path;
+        String base = prefix == null || "/".equals(prefix) ? "" : prefix;
+        return base.endsWith("/") ? base.substring(0, base.length() - 1) + path : base + path;
     }
 
     public int major() {

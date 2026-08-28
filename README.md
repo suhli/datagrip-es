@@ -24,7 +24,7 @@ Requirements: JDK 21. The standalone JDBC artifact targets Java 17.
 Artifacts:
 
 - `jdbc/build/libs/elasticsearch-rest-jdbc.jar`
-- `plugin/build/distributions/datagrip-elasticsearch-rest-*.zip`
+- `plugin/build/distributions/datagrip-elasticsearch-rest-plugin-*.zip`
 
 Install the plugin ZIP with **Settings | Plugins | Install Plugin from Disk**,
 then create **New Data Source | Other | Elasticsearch REST**.

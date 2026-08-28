@@ -22,9 +22,12 @@ import java.util.Base64;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.logging.Level;
+import java.util.logging.Logger;
 
 /** Apache HttpClient transport with TLS state scoped to this client instance. */
 public final class HttpTransport implements Transport {
+    private static final Logger LOG = Logger.getLogger(HttpTransport.class.getName());
     private final CloseableHttpClient client;
     private final Map<String, String> defaultHeaders;
 
@@ -52,10 +55,16 @@ public final class HttpTransport implements Transport {
 
     private static Map<String, String> authenticationHeaders(EsJdbcUrl config) {
         Map<String, String> headers = new LinkedHashMap<>();
+        String auth = first(config.property("auth"), config.property("authType"));
         String apiKey = first(config.property("apiKey"), config.property("apikey"));
         String user = first(config.property("user"), config.property("username"));
         String password = config.property("password");
-        if (apiKey != null) {
+        if ("none".equalsIgnoreCase(auth)) {
+            // Explicitly disabled.
+        } else if ("apiKey".equalsIgnoreCase(auth)) {
+            String secret = first(apiKey, password);
+            if (secret != null && !secret.isBlank()) headers.put("Authorization", "ApiKey " + secret);
+        } else if (apiKey != null) {
             headers.put("Authorization", "ApiKey " + apiKey);
         } else if (user != null) {
             String token = Base64.getEncoder().encodeToString(
@@ -81,14 +90,15 @@ public final class HttpTransport implements Transport {
 
     @Override
     public Response execute(Request request) throws IOException {
-        var builder = org.apache.hc.client5.http.classic.methods.ClassicRequestBuilder
+        long started = System.nanoTime();
+        var builder = org.apache.hc.core5.http.io.support.ClassicRequestBuilder
                 .create(request.method()).setUri(request.uri());
         defaultHeaders.forEach(builder::addHeader);
         request.headers().forEach(builder::setHeader);
         if (request.body() != null) {
             builder.setEntity(new StringEntity(request.body(), ContentType.APPLICATION_JSON));
         }
-        return client.execute(builder.build(), response -> {
+        Response result = client.execute(builder.build(), response -> {
             Map<String, List<String>> headers = new LinkedHashMap<>();
             for (Header header : response.getHeaders()) {
                 headers.computeIfAbsent(header.getName(), ignored -> new ArrayList<>()).add(header.getValue());
@@ -96,6 +106,12 @@ public final class HttpTransport implements Transport {
             String body = response.getEntity() == null ? "" : EntityUtils.toString(response.getEntity());
             return new Response(response.getCode(), Map.copyOf(headers), body);
         });
+        if (LOG.isLoggable(Level.FINE)) {
+            long durationMillis = (System.nanoTime() - started) / 1_000_000L;
+            LOG.fine(() -> request.method() + " " + request.uri().getRawPath()
+                    + " -> HTTP " + result.status() + " in " + durationMillis + " ms");
+        }
+        return result;
     }
 
     @Override

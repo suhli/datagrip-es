@@ -31,11 +31,13 @@ public final class ElasticsearchDriver implements Driver {
     @Override
     public DriverPropertyInfo[] getPropertyInfo(String url, Properties info) {
         return new DriverPropertyInfo[] {
+                choice("auth", "none", "Authentication mode", "none", "basic", "apiKey"),
                 property("user", false, "Basic authentication user"),
-                property("password", false, "Basic authentication password"),
+                property("password", false, "Basic password, or API key when auth=apiKey"),
                 property("apiKey", false, "Elasticsearch API key"),
-                property("ssl", false, "Use HTTPS"),
-                property("verifyTls", false, "Verify server certificate and hostname"),
+                choice("ssl", "false", "Use HTTPS", "false", "true"),
+                choice("verifyTls", "true", "Verify server certificate and hostname", "true", "false"),
+                property("pathPrefix", false, "Reverse-proxy path prefix"),
                 property("connectTimeout", false, "Connect timeout in milliseconds"),
                 property("responseTimeout", false, "Response timeout in milliseconds"),
                 property("headers", false, "Additional semicolon-separated HTTP headers")
@@ -46,6 +48,13 @@ public final class ElasticsearchDriver implements Driver {
         DriverPropertyInfo property = new DriverPropertyInfo(name, null);
         property.required = required;
         property.description = description;
+        return property;
+    }
+
+    private static DriverPropertyInfo choice(String name, String value, String description, String... choices) {
+        DriverPropertyInfo property = new DriverPropertyInfo(name, value);
+        property.description = description;
+        property.choices = choices;
         return property;
     }
 

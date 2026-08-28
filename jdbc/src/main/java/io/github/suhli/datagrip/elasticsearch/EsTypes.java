@@ -11,8 +11,9 @@ public final class EsTypes {
             case "boolean" -> Types.BOOLEAN;
             case "byte" -> Types.TINYINT;
             case "short" -> Types.SMALLINT;
-            case "integer", "unsigned_long" -> Types.INTEGER;
+            case "integer" -> Types.INTEGER;
             case "long" -> Types.BIGINT;
+            case "unsigned_long" -> Types.DECIMAL;
             case "half_float", "float" -> Types.FLOAT;
             case "double", "scaled_float" -> Types.DOUBLE;
             case "date", "date_nanos" -> Types.TIMESTAMP;
@@ -34,6 +35,7 @@ public final class EsTypes {
             case Types.BIGINT -> "BIGINT";
             case Types.FLOAT -> "FLOAT";
             case Types.DOUBLE -> "DOUBLE";
+            case Types.DECIMAL -> "DECIMAL";
             case Types.TIMESTAMP -> "TIMESTAMP";
             case Types.BINARY -> "BINARY";
             case Types.VARCHAR -> "VARCHAR";

@@ -61,9 +61,10 @@ public final class JsonResultMapper {
                 for (JsonNode bucket : buckets) {
                     Map<String, Object> row = new LinkedHashMap<>();
                     String name = prefix.isEmpty() ? aggregation.getKey() : prefix + "." + aggregation.getKey();
-                    row.put(name + ".key", scalarOrJson(bucket.path("key")));
-                    if (bucket.has("doc_count")) row.put(name + ".doc_count", bucket.path("doc_count").longValue());
-                    flattenMetrics(name, bucket, row);
+                    row.put("aggregation", name);
+                    row.put("key", scalarOrJson(bucket.path("key")));
+                    if (bucket.has("doc_count")) row.put("doc_count", bucket.path("doc_count").longValue());
+                    flattenMetrics("", bucket, row);
                     output.add(row);
                 }
             }
@@ -72,14 +73,16 @@ public final class JsonResultMapper {
 
     private static void flattenMetrics(String prefix, JsonNode node, Map<String, Object> row) {
         node.fields().forEachRemaining(entry -> {
-            if ("key".equals(entry.getKey()) || "doc_count".equals(entry.getKey())) return;
+            if ("key".equals(entry.getKey()) || "key_as_string".equals(entry.getKey())
+                    || "doc_count".equals(entry.getKey())) return;
             JsonNode value = entry.getValue();
+            String name = prefix.isEmpty() ? entry.getKey() : prefix + "." + entry.getKey();
             if (value.isObject() && value.has("value")) {
-                row.put(prefix + "." + entry.getKey(), scalarOrJson(value.get("value")));
+                row.put(name, scalarOrJson(value.get("value")));
             } else if (value.isObject() && !value.has("buckets")) {
-                flatten(prefix + "." + entry.getKey(), value, row);
+                flatten(name, value, row);
             } else if (value.has("buckets")) {
-                row.put(prefix + "." + entry.getKey(), json(value.get("buckets")));
+                row.put(name, json(value.get("buckets")));
             }
         });
     }

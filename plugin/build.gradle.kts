@@ -5,6 +5,10 @@ plugins {
     id("org.jetbrains.intellij.platform") version "2.7.2"
 }
 
+base {
+    archivesName.set("datagrip-elasticsearch-rest")
+}
+
 repositories {
     intellijPlatform {
         defaultRepositories()
@@ -31,7 +35,7 @@ java {
 intellijPlatform {
     buildSearchableOptions = false
     pluginConfiguration {
-        name = providers.gradleProperty("pluginName")
+        name = "Elasticsearch REST"
         version = providers.gradleProperty("pluginVersion")
         ideaVersion {
             sinceBuild = providers.gradleProperty("pluginSinceBuild")

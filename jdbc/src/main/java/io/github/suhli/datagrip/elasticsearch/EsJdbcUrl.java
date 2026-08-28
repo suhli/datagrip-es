@@ -49,17 +49,25 @@ public final class EsJdbcUrl {
         }
 
         Map<String, String> values = parseQuery(raw.getRawQuery());
+        if (values.keySet().stream().anyMatch(EsJdbcUrl::isSecretKey)) {
+            throw new SQLException("Credentials must be supplied through connection Properties, not the JDBC URL",
+                    "08001");
+        }
         if (supplied != null) {
             supplied.stringPropertyNames().forEach(k -> values.put(k, supplied.getProperty(k)));
         }
         boolean ssl = bool(values, "ssl", explicitHttps);
         boolean verifyTls = bool(values, "verifyTls", true);
         int port = raw.getPort() >= 0 ? raw.getPort() : (ssl ? 443 : 9200);
-        String path = raw.getRawPath();
-        if (path == null || path.equals("/")) path = "";
+        String path = values.getOrDefault("pathPrefix", raw.getRawPath());
+        if (path == null || path.isBlank() || path.equals("/")) path = "";
         else path = "/" + trimSlashes(path);
         try {
-            URI endpoint = new URI(ssl ? "https" : "http", null, raw.getHost(), port, path, null, null);
+            String host = raw.getHost();
+            if (host.startsWith("[") && host.endsWith("]")) {
+                host = host.substring(1, host.length() - 1);
+            }
+            URI endpoint = new URI(ssl ? "https" : "http", null, host, port, path, null, null);
             Properties options = new Properties();
             values.forEach(options::setProperty);
             return new EsJdbcUrl(endpoint, verifyTls,
@@ -84,6 +92,11 @@ public final class EsJdbcUrl {
 
     private static String decode(String value) {
         return URLDecoder.decode(value, StandardCharsets.UTF_8);
+    }
+
+    private static boolean isSecretKey(String key) {
+        return "password".equalsIgnoreCase(key) || "apiKey".equalsIgnoreCase(key)
+                || "authorization".equalsIgnoreCase(key);
     }
 
     private static boolean bool(Map<String, String> values, String key, boolean fallback) throws SQLException {
@@ -123,6 +136,14 @@ public final class EsJdbcUrl {
         Properties copy = new Properties();
         copy.putAll(properties);
         return copy;
+    }
+
+    public String jdbcUrl() {
+        String endpointText = endpoint.toASCIIString();
+        if (endpointText.startsWith("http://")) {
+            return PREFIX + endpointText.substring("http:".length());
+        }
+        return PREFIX + endpointText;
     }
 
     @Override
