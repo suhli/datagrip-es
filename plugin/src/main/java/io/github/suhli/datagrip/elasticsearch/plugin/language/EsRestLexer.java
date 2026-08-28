@@ -79,7 +79,7 @@ final class EsRestLexer extends LexerBase {
         }
         if (c == '#' || c == '/' && tokenStart + 1 < end && buffer.charAt(tokenStart + 1) == '/') {
             tokenEnd = lineEnd(tokenStart);
-            tokenType = EsRestTokenTypes.COMMENT;
+            tokenType = EsRestTypes.COMMENT;
             return;
         }
         if (c == '/' && followsHttpMethod(tokenStart)) {
@@ -91,7 +91,7 @@ final class EsRestLexer extends LexerBase {
                     break;
                 }
             }
-            tokenType = EsRestTokenTypes.PATH;
+            tokenType = EsRestTypes.PATH;
             return;
         }
         if (c == '"') {
@@ -103,16 +103,16 @@ final class EsRestLexer extends LexerBase {
                 else if (current == '\\') escaped = true;
                 else if (current == '"') break;
             }
-            tokenType = EsRestTokenTypes.STRING;
+            tokenType = EsRestTypes.STRING;
             return;
         }
         IElementType punctuation = switch (c) {
-            case '{' -> EsRestTokenTypes.LBRACE;
-            case '}' -> EsRestTokenTypes.RBRACE;
-            case '[' -> EsRestTokenTypes.LBRACKET;
-            case ']' -> EsRestTokenTypes.RBRACKET;
-            case ':' -> EsRestTokenTypes.COLON;
-            case ',' -> EsRestTokenTypes.COMMA;
+            case '{' -> EsRestTypes.LBRACE;
+            case '}' -> EsRestTypes.RBRACE;
+            case '[' -> EsRestTypes.LBRACKET;
+            case ']' -> EsRestTypes.RBRACKET;
+            case ':' -> EsRestTypes.COLON;
+            case ',' -> EsRestTypes.COMMA;
             default -> null;
         };
         if (punctuation != null) {
@@ -123,7 +123,7 @@ final class EsRestLexer extends LexerBase {
         if (c == '-' || Character.isDigit(c)) {
             tokenEnd = tokenStart + 1;
             while (tokenEnd < end && "0123456789.eE+-".indexOf(buffer.charAt(tokenEnd)) >= 0) tokenEnd++;
-            tokenType = EsRestTokenTypes.NUMBER;
+            tokenType = EsRestTypes.NUMBER;
             return;
         }
 
@@ -135,11 +135,11 @@ final class EsRestLexer extends LexerBase {
         String word = buffer.subSequence(tokenStart, tokenEnd).toString();
         String upper = word.toUpperCase(Locale.ROOT);
         if (METHODS.contains(upper) && isFirstTokenOnLine(tokenStart)) {
-            tokenType = EsRestTokenTypes.METHOD;
+            tokenType = EsRestTypes.METHOD;
         } else if (JSON_KEYWORDS.contains(word)) {
-            tokenType = EsRestTokenTypes.KEYWORD;
+            tokenType = EsRestTypes.KEYWORD;
         } else {
-            tokenType = EsRestTokenTypes.IDENTIFIER;
+            tokenType = EsRestTypes.IDENTIFIER;
         }
     }
 

@@ -22,12 +22,12 @@ import org.jetbrains.annotations.Nullable;
 public final class EsRestEvaluationHelper extends EvaluationHelperBase {
     @Override
     public <V> @NotNull Condition<V> isStatement(@NotNull SyntaxTraverser.Api<V> api) {
-        return Conditions.compose(api.TO_TYPE, Conditions.equalTo(EsRestTokenTypes.REQUEST));
+        return Conditions.compose(api.TO_TYPE, Conditions.equalTo(EsRestTypes.REQUEST));
     }
 
     @Override
     public <V> @NotNull Condition<V> isFile(@NotNull SyntaxTraverser.Api<V> api) {
-        return Conditions.compose(api.TO_TYPE, Conditions.equalTo(EsRestTokenTypes.FILE));
+        return Conditions.compose(api.TO_TYPE, Conditions.equalTo(EsRestTypes.FILE));
     }
 
     @Override
@@ -39,7 +39,7 @@ public final class EsRestEvaluationHelper extends EvaluationHelperBase {
     public <V> @NotNull Condition<V> isWsOrComment(@NotNull SyntaxTraverser.Api<V> api) {
         return node -> {
             Object type = api.TO_TYPE.fun(node);
-            return type == TokenType.WHITE_SPACE || type == EsRestTokenTypes.COMMENT;
+            return type == TokenType.WHITE_SPACE || type == EsRestTypes.COMMENT;
         };
     }
 

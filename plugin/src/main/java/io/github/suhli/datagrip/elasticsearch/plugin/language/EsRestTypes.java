@@ -4,7 +4,7 @@ import com.intellij.psi.tree.IElementType;
 import com.intellij.psi.tree.IFileElementType;
 import com.intellij.psi.tree.TokenSet;
 
-final class EsRestTokenTypes implements EsRestReservedTokens, EsRestOptionalTokens {
+final class EsRestTypes implements EsRestReservedKeywords, EsRestOptionalKeywords {
     static final IFileElementType FILE = new IFileElementType(EsRestLanguage.INSTANCE);
     static final IElementType REQUEST = type("REQUEST");
     static final IElementType OBJECT = type("OBJECT");
@@ -26,7 +26,7 @@ final class EsRestTokenTypes implements EsRestReservedTokens, EsRestOptionalToke
     static final TokenSet COMMENTS = TokenSet.create(COMMENT);
     static final TokenSet STRINGS = TokenSet.create(STRING);
 
-    private EsRestTokenTypes() {}
+    private EsRestTypes() {}
 
     private static IElementType type(String name) {
         return new IElementType(name, EsRestLanguage.INSTANCE);

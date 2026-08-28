@@ -64,31 +64,31 @@ public final class EsRestFormattingModelBuilder implements FormattingModelBuilde
             IElementType rightType = right.myNode.getElementType();
             IElementType leftType = left == null ? null : left.myNode.getElementType();
 
-            if (rightType == EsRestTokenTypes.METHOD) {
+            if (rightType == EsRestTypes.METHOD) {
                 return spacing(0, left == null ? 0 : 2);
             }
-            if (leftType == EsRestTokenTypes.METHOD && rightType == EsRestTokenTypes.PATH) {
+            if (leftType == EsRestTypes.METHOD && rightType == EsRestTypes.PATH) {
                 return spacing(1, 0);
             }
-            if (leftType == EsRestTokenTypes.PATH && rightType == EsRestTokenTypes.COMMENT) {
+            if (leftType == EsRestTypes.PATH && rightType == EsRestTypes.COMMENT) {
                 return spacing(1, 0);
             }
-            if (leftType == EsRestTokenTypes.PATH || leftType == EsRestTokenTypes.COMMENT) {
+            if (leftType == EsRestTypes.PATH || leftType == EsRestTypes.COMMENT) {
                 return spacing(0, 1);
             }
-            if ((leftType == EsRestTokenTypes.LBRACE && rightType == EsRestTokenTypes.RBRACE)
-                    || (leftType == EsRestTokenTypes.LBRACKET
-                    && rightType == EsRestTokenTypes.RBRACKET)) {
+            if ((leftType == EsRestTypes.LBRACE && rightType == EsRestTypes.RBRACE)
+                    || (leftType == EsRestTypes.LBRACKET
+                    && rightType == EsRestTypes.RBRACKET)) {
                 return spacing(0, 0);
             }
-            if (leftType == EsRestTokenTypes.LBRACE || leftType == EsRestTokenTypes.LBRACKET
-                    || leftType == EsRestTokenTypes.COMMA || isClosing(rightType)) {
+            if (leftType == EsRestTypes.LBRACE || leftType == EsRestTypes.LBRACKET
+                    || leftType == EsRestTypes.COMMA || isClosing(rightType)) {
                 return spacing(0, 1);
             }
-            if (rightType == EsRestTokenTypes.COLON || rightType == EsRestTokenTypes.COMMA) {
+            if (rightType == EsRestTypes.COLON || rightType == EsRestTypes.COMMA) {
                 return spacing(0, 0);
             }
-            if (leftType == EsRestTokenTypes.COLON) return spacing(1, 0);
+            if (leftType == EsRestTypes.COLON) return spacing(1, 0);
             return spacing(0, 0);
         }
 
@@ -116,16 +116,16 @@ public final class EsRestFormattingModelBuilder implements FormattingModelBuilde
         }
 
         private static boolean isContainer(IElementType type) {
-            return type == EsRestTokenTypes.OBJECT || type == EsRestTokenTypes.ARRAY;
+            return type == EsRestTypes.OBJECT || type == EsRestTypes.ARRAY;
         }
 
         private static boolean isBracket(IElementType type) {
-            return type == EsRestTokenTypes.LBRACE || type == EsRestTokenTypes.RBRACE
-                    || type == EsRestTokenTypes.LBRACKET || type == EsRestTokenTypes.RBRACKET;
+            return type == EsRestTypes.LBRACE || type == EsRestTypes.RBRACE
+                    || type == EsRestTypes.LBRACKET || type == EsRestTypes.RBRACKET;
         }
 
         private static boolean isClosing(IElementType type) {
-            return type == EsRestTokenTypes.RBRACE || type == EsRestTokenTypes.RBRACKET;
+            return type == EsRestTypes.RBRACE || type == EsRestTypes.RBRACKET;
         }
     }
 }

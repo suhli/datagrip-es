@@ -30,7 +30,7 @@ public final class EsRestParserDefinition implements ParserDefinition {
             while (!builder.eof()) {
                 skipTopLevel(builder);
                 if (builder.eof()) break;
-                if (builder.getTokenType() == EsRestTokenTypes.METHOD) {
+                if (builder.getTokenType() == EsRestTypes.METHOD) {
                     parseRequest(builder);
                 } else {
                     builder.advanceLexer();
@@ -44,7 +44,7 @@ public final class EsRestParserDefinition implements ParserDefinition {
     private static void skipTopLevel(PsiBuilder builder) {
         while (true) {
             IElementType token = builder.getTokenType();
-            if (token == TokenType.WHITE_SPACE || token == EsRestTokenTypes.COMMENT) {
+            if (token == TokenType.WHITE_SPACE || token == EsRestTypes.COMMENT) {
                 builder.advanceLexer();
                 continue;
             }
@@ -57,31 +57,31 @@ public final class EsRestParserDefinition implements ParserDefinition {
         builder.advanceLexer(); // METHOD
         while (true) {
             IElementType token = builder.getTokenType();
-            if (token == EsRestTokenTypes.PATH
-                    || token == EsRestTokenTypes.COMMENT
+            if (token == EsRestTypes.PATH
+                    || token == EsRestTypes.COMMENT
                     || token == TokenType.WHITE_SPACE) {
                 builder.advanceLexer();
                 continue;
             }
             break;
         }
-        if (builder.getTokenType() == EsRestTokenTypes.LBRACE
-                || builder.getTokenType() == EsRestTokenTypes.LBRACKET) {
+        if (builder.getTokenType() == EsRestTypes.LBRACE
+                || builder.getTokenType() == EsRestTypes.LBRACKET) {
             parseToken(builder);
-        } else if (builder.getTokenType() != EsRestTokenTypes.METHOD && !builder.eof()) {
-            while (!builder.eof() && builder.getTokenType() != EsRestTokenTypes.METHOD) {
+        } else if (builder.getTokenType() != EsRestTypes.METHOD && !builder.eof()) {
+            while (!builder.eof() && builder.getTokenType() != EsRestTypes.METHOD) {
                 parseToken(builder);
             }
         }
-        request.done(EsRestTokenTypes.REQUEST);
+        request.done(EsRestTypes.REQUEST);
     }
 
     private static void parseToken(PsiBuilder builder) {
         IElementType token = builder.getTokenType();
-        if (token == EsRestTokenTypes.LBRACE) {
-            parseComposite(builder, EsRestTokenTypes.RBRACE, EsRestTokenTypes.OBJECT);
-        } else if (token == EsRestTokenTypes.LBRACKET) {
-            parseComposite(builder, EsRestTokenTypes.RBRACKET, EsRestTokenTypes.ARRAY);
+        if (token == EsRestTypes.LBRACE) {
+            parseComposite(builder, EsRestTypes.RBRACE, EsRestTypes.OBJECT);
+        } else if (token == EsRestTypes.LBRACKET) {
+            parseComposite(builder, EsRestTypes.RBRACKET, EsRestTypes.ARRAY);
         } else {
             builder.advanceLexer();
         }
@@ -98,17 +98,17 @@ public final class EsRestParserDefinition implements ParserDefinition {
 
     @Override
     public @NotNull IFileElementType getFileNodeType() {
-        return EsRestTokenTypes.FILE;
+        return EsRestTypes.FILE;
     }
 
     @Override
     public @NotNull TokenSet getCommentTokens() {
-        return EsRestTokenTypes.COMMENTS;
+        return EsRestTypes.COMMENTS;
     }
 
     @Override
     public @NotNull TokenSet getStringLiteralElements() {
-        return EsRestTokenTypes.STRINGS;
+        return EsRestTypes.STRINGS;
     }
 
     @Override

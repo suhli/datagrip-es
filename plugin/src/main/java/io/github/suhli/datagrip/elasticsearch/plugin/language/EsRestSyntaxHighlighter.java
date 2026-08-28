@@ -35,15 +35,15 @@ final class EsRestSyntaxHighlighter extends SyntaxHighlighterBase {
 
     @Override
     public TextAttributesKey @NotNull [] getTokenHighlights(IElementType tokenType) {
-        if (tokenType == EsRestTokenTypes.METHOD) return pack(METHOD);
-        if (tokenType == EsRestTokenTypes.PATH) return pack(PATH);
-        if (tokenType == EsRestTokenTypes.COMMENT) return pack(COMMENT);
-        if (tokenType == EsRestTokenTypes.STRING) return pack(STRING);
-        if (tokenType == EsRestTokenTypes.NUMBER) return pack(NUMBER);
-        if (tokenType == EsRestTokenTypes.KEYWORD) return pack(KEYWORD);
-        if (tokenType == EsRestTokenTypes.LBRACE || tokenType == EsRestTokenTypes.RBRACE
-                || tokenType == EsRestTokenTypes.LBRACKET || tokenType == EsRestTokenTypes.RBRACKET
-                || tokenType == EsRestTokenTypes.COLON || tokenType == EsRestTokenTypes.COMMA) {
+        if (tokenType == EsRestTypes.METHOD) return pack(METHOD);
+        if (tokenType == EsRestTypes.PATH) return pack(PATH);
+        if (tokenType == EsRestTypes.COMMENT) return pack(COMMENT);
+        if (tokenType == EsRestTypes.STRING) return pack(STRING);
+        if (tokenType == EsRestTypes.NUMBER) return pack(NUMBER);
+        if (tokenType == EsRestTypes.KEYWORD) return pack(KEYWORD);
+        if (tokenType == EsRestTypes.LBRACE || tokenType == EsRestTypes.RBRACE
+                || tokenType == EsRestTypes.LBRACKET || tokenType == EsRestTypes.RBRACKET
+                || tokenType == EsRestTypes.COLON || tokenType == EsRestTypes.COMMA) {
             return pack(PUNCTUATION);
         }
         if (tokenType == TokenType.BAD_CHARACTER) return pack(BAD);
