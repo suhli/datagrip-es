@@ -1,0 +1,22 @@
+{
+  "version": "0.2.0",
+  "configurations": [
+    {
+      "name": "Debug Elasticsearch REST Plugin in DataGrip",
+      "type": "java",
+      "request": "attach",
+      "hostName": "localhost",
+      "port": 5005,
+      "timeout": 600000,
+      "preLaunchTask": "runDataGrip (debug)"
+    },
+    {
+      "name": "Attach to running DataGrip",
+      "type": "java",
+      "request": "attach",
+      "hostName": "localhost",
+      "port": 5005,
+      "timeout": 60000
+    }
+  ]
+}

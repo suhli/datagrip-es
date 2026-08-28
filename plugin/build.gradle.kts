@@ -67,3 +67,46 @@ intellijPlatform {
 tasks.buildSearchableOptions {
     enabled = false
 }
+
+fun loadDotEnv(file: File): Map<String, String> {
+    if (!file.isFile) return emptyMap()
+    return file.readLines()
+        .asSequence()
+        .map(String::trim)
+        .filter { it.isNotEmpty() && !it.startsWith("#") && it.contains("=") }
+        .associate { line ->
+            val separator = line.indexOf('=')
+            val key = line.substring(0, separator).trim()
+            var value = line.substring(separator + 1).trim()
+            if (
+                (value.startsWith('"') && value.endsWith('"')) ||
+                (value.startsWith('\'') && value.endsWith('\''))
+            ) {
+                value = value.substring(1, value.length - 1)
+            }
+            key to value
+        }
+}
+
+val dotenv = loadDotEnv(rootProject.file(".env"))
+val localDataGripPath = sequenceOf(
+    System.getenv("LOCAL_DATAGRIP_PATH"),
+    dotenv["LOCAL_DATAGRIP_PATH"],
+    providers.gradleProperty("localDataGripPath").orNull,
+).mapNotNull { it?.trim()?.takeIf(String::isNotEmpty) }.firstOrNull()
+
+if (localDataGripPath != null) {
+    intellijPlatformTesting {
+        runIde {
+            register("runDataGrip") {
+                localPath = file(localDataGripPath)
+            }
+        }
+    }
+}
+
+tasks.withType<JavaExec>().configureEach {
+    if ((name == "runIde" || name == "runDataGrip") && project.hasProperty("debugIde")) {
+        jvmArgs("-agentlib:jdwp=transport=dt_socket,server=y,suspend=y,address=*:5005")
+    }
+}

@@ -1,0 +1,77 @@
+{
+  "version": "2.0.0",
+  "tasks": [
+    {
+      "label": "runDataGrip (debug)",
+      "type": "shell",
+      "command": "./gradlew",
+      "args": [
+        ":datagrip-elasticsearch-rest-plugin:runDataGrip",
+        "-PdebugIde=true",
+        "--console=plain"
+      ],
+      "options": {
+        "cwd": "${workspaceFolder}"
+      },
+      "windows": {
+        "options": {
+          "shell": {
+            "executable": "powershell.exe",
+            "args": [
+              "-NoLogo",
+              "-NoProfile",
+              "-ExecutionPolicy",
+              "Bypass",
+              "-File"
+            ]
+          }
+        },
+        "command": "${workspaceFolder}\\.vscode\\run-ide-debug.ps1"
+      },
+      "isBackground": true,
+      "problemMatcher": {
+        "owner": "runIde",
+        "pattern": {
+          "regexp": "^$"
+        },
+        "background": {
+          "activeOnStart": true,
+          "beginsPattern": ".",
+          "endsPattern": "Listening for transport dt_socket at address: 5005"
+        }
+      },
+      "presentation": {
+        "reveal": "always",
+        "panel": "dedicated",
+        "focus": false
+      }
+    },
+    {
+      "label": "gradle --stop",
+      "type": "shell",
+      "command": "./gradlew",
+      "args": [
+        "--stop"
+      ],
+      "options": {
+        "cwd": "${workspaceFolder}"
+      },
+      "windows": {
+        "options": {
+          "shell": {
+            "executable": "powershell.exe",
+            "args": [
+              "-NoLogo",
+              "-NoProfile",
+              "-ExecutionPolicy",
+              "Bypass",
+              "-File"
+            ]
+          }
+        },
+        "command": "${workspaceFolder}\\.vscode\\run-ide-debug.ps1"
+      },
+      "problemMatcher": []
+    }
+  ]
+}
