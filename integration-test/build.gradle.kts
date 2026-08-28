@@ -9,7 +9,7 @@ java {
 }
 
 dependencies {
-    testImplementation(project(":jdbc"))
+    testImplementation(project(path = ":jdbc", configuration = "shadow"))
     testImplementation(platform("org.junit:junit-bom:5.13.4"))
     testImplementation("org.junit.jupiter:junit-jupiter")
     testRuntimeOnly("org.junit.platform:junit-platform-launcher")

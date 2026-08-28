@@ -34,7 +34,6 @@ public final class ElasticsearchDriver implements Driver {
                 choice("auth", "none", "Authentication mode", "none", "basic", "apiKey"),
                 property("user", false, "Basic authentication user"),
                 property("password", false, "Basic password, or API key when auth=apiKey"),
-                property("apiKey", false, "Elasticsearch API key"),
                 choice("ssl", "false", "Use HTTPS", "false", "true"),
                 choice("verifyTls", "true", "Verify server certificate and hostname", "true", "false"),
                 property("pathPrefix", false, "Reverse-proxy path prefix"),

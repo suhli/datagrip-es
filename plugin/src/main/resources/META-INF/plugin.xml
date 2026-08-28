@@ -1,6 +1,6 @@
 <?xml version="1.0" encoding="UTF-8"?>
 <idea-plugin>
-    <id>io.github.suhli.datagrip.elasticsearch</id>
+    <id>io.github.suhli.elasticsearch.rest</id>
     <name>Elasticsearch REST</name>
     <vendor url="https://github.com/suhli/datagrip-es">suhli</vendor>
 
