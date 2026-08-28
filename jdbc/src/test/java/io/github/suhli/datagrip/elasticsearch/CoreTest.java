@@ -5,9 +5,7 @@ import org.junit.jupiter.api.Test;
 
 import java.sql.SQLException;
 import java.sql.Types;
-import java.net.URI;
 import java.sql.Connection;
-import java.util.List;
 import java.util.Map;
 import java.util.Properties;
 
@@ -56,6 +54,60 @@ class CoreTest {
                 () -> RestRequestParser.parse("GET /a\n\nGET /b"));
         assertTrue(multiple.getMessage().contains("Multiple"));
         assertThrows(SQLException.class, () -> RestRequestParser.parse("SELECT * FROM index"));
+    }
+
+    @Test
+    void translatesDataGripTableSelectWithoutElasticsearchSqlApi() throws Exception {
+        var request = SqlSelectTranslator.translate("""
+                SELECT *
+                FROM "test-cluster"."logs-2026.08.28"
+                ORDER BY "@timestamp" DESC
+                LIMIT 50 OFFSET 10
+                """, 0, 0);
+
+        assertNotNull(request);
+        assertEquals("POST", request.method());
+        assertEquals("/logs-2026.08.28/_search", request.path());
+        var body = JSON.readTree(request.body());
+        assertEquals(50, body.path("size").asInt());
+        assertEquals(10, body.path("from").asInt());
+        assertEquals("desc", body.path("sort").get(0).path("@timestamp").asText());
+
+        var count = SqlSelectTranslator.translate(
+                "SELECT count(*) AS total FROM `users`", 0, 0);
+        assertEquals("GET", count.method());
+        assertEquals("/users/_count", count.path());
+
+        var filtered = SqlSelectTranslator.translate("""
+                SELECT * FROM users
+                WHERE status:200 AND (service.name:"checkout api" OR url.path:/orders/*)
+                LIMIT 25
+                """, 0, 0);
+        var filteredBody = JSON.readTree(filtered.body());
+        assertEquals(25, filteredBody.path("size").asInt());
+        assertTrue(filteredBody.path("query").has("bool"));
+    }
+
+    @Test
+    void parsesKqlBooleanRangeWildcardAndExistsQueries() throws Exception {
+        Map<String, Object> query = KqlParser.parse("""
+                NOT response.status >= 500 AND
+                (host.name:web-* OR user.id:*) AND message:"request failed"
+                """);
+        String json = JSON.writeValueAsString(query);
+        assertTrue(json.contains("must_not"));
+        assertTrue(json.contains("\"range\""));
+        assertTrue(json.contains("\"wildcard\""));
+        assertTrue(json.contains("\"exists\""));
+        assertTrue(json.contains("\"match_phrase\""));
+
+        String nested = JSON.writeValueAsString(
+                KqlParser.parse("user:{ first:\"Ada\" AND last:Lo* }"));
+        assertTrue(nested.contains("\"nested\""));
+        assertTrue(nested.contains("\"path\":\"user\""));
+        assertTrue(nested.contains("\"user.first\""));
+        assertTrue(nested.contains("\"user.last\""));
+        assertThrows(SQLException.class, () -> KqlParser.parse("status:(200 OR"));
     }
 
     @Test

@@ -85,6 +85,19 @@ Search hits become rows containing `_index`, `_id`, `_score`, and flattened
 also tabularized; responses that cannot be flattened safely remain available
 without loss in a `JSON` column.
 
+Opening an index in DataGrip's table data editor uses a local `SELECT` to REST
+translator; it never calls Elasticsearch SQL. Text entered after the grid's
+`WHERE` marker is interpreted as KQL and converted to Query DSL:
+
+```text
+status:200 AND (service.name:"checkout api" OR url.path:/orders/*)
+```
+
+Boolean operators, grouping, negation, comparisons, phrases, wildcards,
+field-existence checks, free-text terms, and nested-field groups are supported.
+The visible `WHERE` marker is fixed by DataGrip's generic table-data UI; its
+contents use KQL semantics for this driver.
+
 ## TLS security
 
 `verifyTls=true` is the default.

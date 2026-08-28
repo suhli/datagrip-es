@@ -13,7 +13,6 @@ import java.time.LocalDate;
 import java.time.LocalDateTime;
 import java.time.OffsetDateTime;
 import java.util.*;
-import java.util.concurrent.Executor;
 
 final class JdbcProxies {
     private static final ObjectMapper JSON = new ObjectMapper();
@@ -215,7 +214,9 @@ final class JdbcProxies {
 
         private ResultSet execute(String text) throws SQLException {
             closeCurrent();
-            RestRequestParser.ParsedRequest request = RestRequestParser.parse(text);
+            RestRequestParser.ParsedRequest request =
+                    SqlSelectTranslator.translate(text, maxRows, fetchSize);
+            if (request == null) request = RestRequestParser.parse(text);
             URI uri = requestUri(state.config.endpoint(), request.path());
             try {
                 Transport.Response response = state.transport.execute(new Transport.Request(
@@ -434,7 +435,7 @@ final class JdbcProxies {
                 if (!response.successful()) throw new SQLException("Mapping request returned HTTP " + response.status());
                 var root = JSON.readTree(response.body());
                 Map<String, com.fasterxml.jackson.databind.JsonNode> result = new LinkedHashMap<>();
-                root.fields().forEachRemaining(entry -> result.put(entry.getKey(), entry.getValue()));
+                root.properties().forEach(entry -> result.put(entry.getKey(), entry.getValue()));
                 state.mappings = Map.copyOf(result);
                 return state.mappings;
             } catch (IOException e) {
