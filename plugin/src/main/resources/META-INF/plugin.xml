@@ -1,0 +1,27 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<idea-plugin>
+    <id>io.github.suhli.datagrip.elasticsearch</id>
+    <name>Elasticsearch REST</name>
+    <vendor url="https://github.com/suhli/datagrip-es">suhli</vendor>
+
+    <description><![CDATA[
+      A lightweight Elasticsearch REST data source for DataGrip. It exposes
+      Elasticsearch indices and mappings through JDBC metadata and executes
+      Dev Tools-style REST requests without Elasticsearch SQL or a commercial
+      Elasticsearch JDBC driver.
+    ]]></description>
+
+    <depends>com.intellij.modules.platform</depends>
+    <depends>com.intellij.database</depends>
+
+    <!--
+      Database Tools has no documented Java extension point for contributing a
+      preconfigured basic JDBC driver. These declarative extension points are
+      the mechanism used by JetBrains' own driver-bundling reference plugin.
+      Keep this compatibility-sensitive integration isolated in this module.
+    -->
+    <extensions defaultExtensionNs="com.intellij">
+        <database.driversConfig config="databaseDrivers/elasticsearch-rest.xml"/>
+        <database.artifactsConfig config="databaseDrivers/elasticsearch-rest-artifacts.xml"/>
+    </extensions>
+</idea-plugin>

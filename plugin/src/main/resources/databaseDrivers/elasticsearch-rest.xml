@@ -1,0 +1,15 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<drivers>
+    <driver
+        id="elasticsearch-rest"
+        name="Elasticsearch REST"
+        driver-class="io.github.suhli.datagrip.elasticsearch.jdbc.EsRestDriver">
+        <url-template name="HTTP" template="jdbc:es-rest://{host:localhost}:{port:9200}"/>
+        <url-template name="HTTPS" template="jdbc:es-rest:https://{host:localhost}:{port:9200}"/>
+        <artifact name="elasticsearch.rest.jdbc" use="true" rolling="false"/>
+        <option name="auto-sync" value="true"/>
+        <jdbc-additional-properties>
+            <property name="auto-managed" value="true"/>
+        </jdbc-additional-properties>
+    </driver>
+</drivers>

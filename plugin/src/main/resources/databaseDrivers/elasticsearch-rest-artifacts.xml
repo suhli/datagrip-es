@@ -1,0 +1,8 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<artifacts>
+    <artifact id="elasticsearch.rest.jdbc" name="Elasticsearch REST JDBC">
+        <version version="0.1.0">
+            <item url="file://$APPLICATION_PLUGINS_DIR$/datagrip-elasticsearch-rest/lib/elasticsearch-rest-jdbc.jar"/>
+        </version>
+    </artifact>
+</artifacts>
