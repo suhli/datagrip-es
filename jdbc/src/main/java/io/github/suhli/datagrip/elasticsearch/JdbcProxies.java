@@ -240,8 +240,13 @@ final class JdbcProxies {
         private ResultSet executeRequest(RestRequestParser.ParsedRequest request) throws SQLException {
             URI uri = requestUri(state.config.endpoint(), request.path());
             try {
+                Map<String, String> headers = new LinkedHashMap<>();
+                headers.put("Accept", "application/json");
+                if (RestRequestParser.isNdjsonPath(request.path())) {
+                    headers.put("Content-Type", "application/x-ndjson");
+                }
                 Transport.Response response = state.transport.execute(new Transport.Request(
-                        request.method(), uri, Map.of("Accept", "application/json"), request.body()));
+                        request.method(), uri, headers, request.body()));
                 if (!response.successful()) {
                     throw EsSqlException.from(response, request.method(), request.path());
                 }
@@ -404,11 +409,12 @@ final class JdbcProxies {
                         "storesLowerCaseQuotedIdentifiers", "storesUpperCaseIdentifiers",
                         "storesUpperCaseQuotedIdentifiers", "supportsTransactions",
                         "supportsStoredProcedures", "supportsBatchUpdates", "supportsSavepoints",
-                        "supportsMultipleTransactions", "supportsMultipleResultSets",
+                        "supportsMultipleTransactions",
                         "supportsResultSetConcurrency" -> false;
                 case "storesMixedCaseQuotedIdentifiers", "supportsMixedCaseIdentifiers",
                         "supportsMixedCaseQuotedIdentifiers", "allTablesAreSelectable",
-                        "isReadOnly", "nullsAreSortedLow", "supportsResultSetType" -> true;
+                        "isReadOnly", "nullsAreSortedLow", "supportsResultSetType",
+                        "supportsMultipleResultSets", "supportsMultipleOpenResults" -> true;
                 case "nullsAreSortedHigh", "nullsAreSortedAtStart", "nullsAreSortedAtEnd",
                         "usesLocalFiles", "usesLocalFilePerTable", "supportsAlterTableWithAddColumn",
                         "supportsAlterTableWithDropColumn" -> false;

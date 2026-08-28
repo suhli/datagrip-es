@@ -2,10 +2,9 @@ package io.github.suhli.datagrip.elasticsearch.plugin;
 
 import com.intellij.database.dataSource.DatabaseDriver;
 import com.intellij.database.dataSource.DatabaseDriverManager;
-import com.intellij.ide.plugins.IdeaPluginDescriptor;
-import com.intellij.ide.plugins.PluginManagerCore;
+import com.intellij.ide.plugins.PluginManager;
 import com.intellij.openapi.diagnostic.Logger;
-import com.intellij.openapi.extensions.PluginId;
+import com.intellij.openapi.extensions.PluginDescriptor;
 import com.intellij.openapi.project.Project;
 import com.intellij.openapi.startup.StartupActivity;
 import com.intellij.openapi.vfs.JarFileSystem;
@@ -27,13 +26,12 @@ import java.util.List;
  */
 public final class BundledDriverStartupActivity implements StartupActivity {
     private static final Logger LOG = Logger.getInstance(BundledDriverStartupActivity.class);
-    private static final PluginId PLUGIN_ID = PluginId.getId("io.github.suhli.elasticsearch.rest");
     private static final String DRIVER_ID = "elasticsearch-rest";
     private static final String DRIVER_JAR = "lib/elasticsearch-rest-jdbc.jar";
 
     @Override
     public void runActivity(@NotNull Project project) {
-        IdeaPluginDescriptor plugin = PluginManagerCore.getPlugin(PLUGIN_ID);
+        PluginDescriptor plugin = PluginManager.getPluginByClass(BundledDriverStartupActivity.class);
         if (plugin == null) {
             LOG.warn("Elasticsearch REST plugin descriptor is unavailable");
             return;
@@ -74,6 +72,6 @@ public final class BundledDriverStartupActivity implements StartupActivity {
         elements.addAll(SimpleClasspathElementFactory.createElements(driverUrl));
         driver.setAdditionalClasspathElements(elements);
         manager.updateDriver(driver);
-        LOG.info("Configured bundled Elasticsearch REST JDBC driver: " + driver.hasDriverFiles());
+        LOG.info("Configured bundled Elasticsearch REST JDBC driver");
     }
 }

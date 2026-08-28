@@ -71,6 +71,21 @@ class CoreTest {
         assertFalse(requests.get(1).body().contains("hash comment"));
         assertThrows(SQLException.class, () -> RestRequestParser.parse("GET /a\nGET /b"));
         assertThrows(SQLException.class, () -> RestRequestParser.parse("SELECT * FROM index"));
+
+        var ndjson = RestRequestParser.parse("""
+                POST /_msearch
+                {"index":"users"}
+                {"query":{"match_all":{}}}
+                """);
+        assertEquals("POST", ndjson.method());
+        assertEquals(2, ndjson.body().lines().count());
+        assertTrue(ndjson.body().endsWith("\n"));
+        assertTrue(RestRequestParser.isNdjsonPath("/users/_bulk?refresh=true"));
+        assertThrows(SQLException.class, () -> RestRequestParser.parse("""
+                POST /_bulk
+                {"index":{}}
+                not-json
+                """));
     }
 
     @Test
@@ -194,6 +209,8 @@ class CoreTest {
         FakeTransport transport = new FakeTransport();
         EsVersion version = new EsVersion("Elasticsearch", "8.17.0", "elasticsearch", "test-cluster", "uuid");
         try (Connection connection = JdbcProxies.open(config, transport, version)) {
+            assertTrue(connection.getMetaData().supportsMultipleResultSets());
+            assertTrue(connection.getMetaData().supportsMultipleOpenResults());
             try (var catalogs = connection.getMetaData().getCatalogs()) {
                 assertTrue(catalogs.next());
                 assertEquals("test-cluster", catalogs.getString("TABLE_CAT"));

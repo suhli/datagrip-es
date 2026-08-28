@@ -96,7 +96,12 @@ public final class HttpTransport implements Transport {
         defaultHeaders.forEach(builder::addHeader);
         request.headers().forEach(builder::setHeader);
         if (request.body() != null) {
-            builder.setEntity(new StringEntity(request.body(), ContentType.APPLICATION_JSON));
+            String contentType = request.headers().entrySet().stream()
+                    .filter(entry -> entry.getKey().equalsIgnoreCase("Content-Type"))
+                    .map(Map.Entry::getValue)
+                    .findFirst()
+                    .orElse(ContentType.APPLICATION_JSON.getMimeType());
+            builder.setEntity(new StringEntity(request.body(), ContentType.parse(contentType)));
         }
         Response result = client.execute(builder.build(), response -> {
             Map<String, List<String>> headers = new LinkedHashMap<>();

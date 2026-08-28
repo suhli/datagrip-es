@@ -38,23 +38,62 @@ public final class RestRequestParser {
             cursor = skipIgnorable(text, lineEnd);
             String body = null;
             if (cursor < text.length() && !looksLikeRequestLine(text, cursor)) {
-                char first = text.charAt(cursor);
-                if (first != '{' && first != '[') {
-                    throw syntax("Expected JSON body or another HTTP request");
+                if (isNdjsonPath(path)) {
+                    NdjsonBody ndjson = scanNdjsonBody(text, cursor);
+                    body = ndjson.body();
+                    cursor = skipIgnorable(text, ndjson.end());
+                } else {
+                    char first = text.charAt(cursor);
+                    if (first != '{' && first != '[') {
+                        throw syntax("Expected JSON body or another HTTP request");
+                    }
+                    int bodyEnd = scanJsonValue(text, cursor);
+                    body = stripJsonComments(text.substring(cursor, bodyEnd));
+                    try {
+                        JSON.readTree(body);
+                    } catch (Exception e) {
+                        throw new SQLException("Invalid JSON request body: " + e.getMessage(), "42000", e);
+                    }
+                    cursor = skipIgnorable(text, bodyEnd);
                 }
-                int bodyEnd = scanJsonValue(text, cursor);
-                body = stripJsonComments(text.substring(cursor, bodyEnd));
-                try {
-                    JSON.readTree(body);
-                } catch (Exception e) {
-                    throw new SQLException("Invalid JSON request body: " + e.getMessage(), "42000", e);
-                }
-                cursor = skipIgnorable(text, bodyEnd);
             }
             requests.add(new ParsedRequest(method, path, body));
         }
         if (requests.isEmpty()) throw syntax("Empty request");
         return List.copyOf(requests);
+    }
+
+    public static boolean isNdjsonPath(String path) {
+        int query = path.indexOf('?');
+        String clean = query < 0 ? path : path.substring(0, query);
+        return clean.endsWith("/_bulk") || clean.equals("/_bulk")
+                || clean.endsWith("/_msearch") || clean.equals("/_msearch")
+                || clean.endsWith("/_msearch/template") || clean.equals("/_msearch/template");
+    }
+
+    private static NdjsonBody scanNdjsonBody(String text, int start) throws SQLException {
+        StringBuilder body = new StringBuilder();
+        int cursor = start;
+        int lineNumber = 1;
+        while (cursor < text.length()) {
+            if (looksLikeRequestLine(text, cursor)) break;
+            int end = lineEnd(text, cursor);
+            String line = stripJsonComments(text.substring(cursor, end)).trim();
+            if (!line.isEmpty()) {
+                try {
+                    JSON.readTree(line);
+                } catch (Exception e) {
+                    throw new SQLException(
+                            "Invalid NDJSON at body line " + lineNumber + ": " + e.getMessage(),
+                            "42000", e);
+                }
+                body.append(line).append('\n');
+            }
+            cursor = afterLineBreak(text, end);
+            lineNumber++;
+        }
+        if (body.isEmpty()) throw syntax("Expected NDJSON request body");
+        return new NdjsonBody(body.toString(), cursor);
     }
 
     private static boolean looksLikeRequestLine(String text, int start) {
@@ -78,6 +117,13 @@ public final class RestRequestParser {
         int end = start;
         while (end < text.length() && text.charAt(end) != '\r' && text.charAt(end) != '\n') end++;
         return end;
+    }
+
+    private static int afterLineBreak(String text, int end) {
+        int cursor = end;
+        if (cursor < text.length() && text.charAt(cursor) == '\r') cursor++;
+        if (cursor < text.length() && text.charAt(cursor) == '\n') cursor++;
+        return cursor;
     }
 
     private static String stripRequestLineComment(String line) {
@@ -186,4 +232,6 @@ public final class RestRequestParser {
     }
 
     public record ParsedRequest(String method, String path, String body) {}
+
+    private record NdjsonBody(String body, int end) {}
 }

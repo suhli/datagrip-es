@@ -13,6 +13,7 @@
 
     <depends>com.intellij.modules.platform</depends>
     <depends>com.intellij.database</depends>
+    <depends>com.intellij.modules.sql</depends>
 
     <!--
       Database Tools has no documented Java extension point for contributing a

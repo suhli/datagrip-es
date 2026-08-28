@@ -4,7 +4,7 @@ import com.intellij.psi.tree.IElementType;
 import com.intellij.psi.tree.IFileElementType;
 import com.intellij.psi.tree.TokenSet;
 
-final class EsRestTokenTypes {
+final class EsRestTokenTypes implements EsRestReservedTokens, EsRestOptionalTokens {
     static final IFileElementType FILE = new IFileElementType(EsRestLanguage.INSTANCE);
     static final IElementType OBJECT = type("OBJECT");
     static final IElementType ARRAY = type("ARRAY");

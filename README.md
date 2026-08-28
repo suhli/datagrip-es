@@ -75,10 +75,13 @@ GET /my-index/_search
 }
 ```
 
-In the generic DataGrip JDBC console, select the complete request (request line
-and body) before executing it. DataGrip then passes the selected text to
-`Statement.execute`, and the normal Result Grid, copy, and export actions are
-available. Multiple request blocks and `//` or `#` line comments are supported:
+The data source binds its Elasticsearch REST dialect to DataGrip's Query
+Console, providing method/path/JSON highlighting and formatting. Execute the
+current request or select several complete request blocks; DataGrip passes them
+to `Statement.execute`, and the normal Result Grid, copy, and export actions
+remain available. Multiple request blocks and `//` or `#` line comments are
+supported. `_bulk`, `_msearch`, and `_msearch/template` bodies are sent as
+newline-delimited JSON with `application/x-ndjson`:
 
 ```http
 // Search request
