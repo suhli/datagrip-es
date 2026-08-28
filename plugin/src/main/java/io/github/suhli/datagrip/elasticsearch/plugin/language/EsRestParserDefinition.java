@@ -1,7 +1,6 @@
 package io.github.suhli.datagrip.elasticsearch.plugin.language;
 
 import com.intellij.extapi.psi.ASTWrapperPsiElement;
-import com.intellij.extapi.psi.PsiFileBase;
 import com.intellij.lang.ASTNode;
 import com.intellij.lang.ParserDefinition;
 import com.intellij.lang.PsiBuilder;
@@ -15,6 +14,10 @@ import com.intellij.psi.tree.IElementType;
 import com.intellij.psi.TokenType;
 import com.intellij.psi.tree.IFileElementType;
 import com.intellij.psi.tree.TokenSet;
+import com.intellij.sql.psi.SqlElement;
+import com.intellij.sql.psi.SqlStatement;
+import com.intellij.sql.psi.SqlVisitor;
+import com.intellij.sql.psi.impl.SqlFileImpl;
 import org.jetbrains.annotations.NotNull;
 
 public final class EsRestParserDefinition implements ParserDefinition {
@@ -113,21 +116,34 @@ public final class EsRestParserDefinition implements ParserDefinition {
 
     @Override
     public @NotNull PsiElement createElement(ASTNode node) {
+        if (node.getElementType() == EsRestTypes.REQUEST) {
+            return new RequestPsi(node);
+        }
         return new ASTWrapperPsiElement(node);
     }
 
     @Override
     public @NotNull PsiFile createFile(@NotNull FileViewProvider viewProvider) {
-        return new PsiFileBase(viewProvider, EsRestLanguage.INSTANCE) {
-            @Override
-            public @NotNull com.intellij.openapi.fileTypes.FileType getFileType() {
-                return EsRestFileType.INSTANCE;
-            }
+        return new SqlFileImpl(viewProvider, EsRestLanguage.INSTANCE);
+    }
 
-            @Override
-            public String toString() {
-                return "Elasticsearch REST Console";
+    private static final class RequestPsi extends ASTWrapperPsiElement implements SqlStatement {
+        RequestPsi(ASTNode node) {
+            super(node);
+        }
+
+        @Override
+        public void accept(@NotNull SqlVisitor visitor) {
+            visitor.visitSqlStatement(this);
+        }
+
+        @Override
+        public void acceptChildren(@NotNull SqlVisitor visitor) {
+            for (PsiElement child = getFirstChild(); child != null; child = child.getNextSibling()) {
+                if (child instanceof SqlElement sqlElement) {
+                    sqlElement.accept(visitor);
+                }
             }
-        };
+        }
     }
 }

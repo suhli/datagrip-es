@@ -1,0 +1,8 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<drivers>
+  <driver id="couchbase_query" name="Couchbase Query" dialect="CouchbaseQuery" icon="AllIcons.Providers.Couchbase" driver-class="com.intellij.CouchbaseJdbcDriver">
+    <url-template name="default" template="jdbc:couchbase:&lt;\,,{host::localhost}[:{port}]&gt;[[/{default_bucket}?][\?&lt;&amp;,user={user},password={password},{:identifier}={:identifier}&gt;]]"/>
+    <artifact name="Couchbase" use="true" rolling="true"/>
+    <option name="auto-sync" value="true"/>
+  </driver>
+</drivers>

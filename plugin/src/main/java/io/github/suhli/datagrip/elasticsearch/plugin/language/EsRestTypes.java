@@ -3,9 +3,11 @@ package io.github.suhli.datagrip.elasticsearch.plugin.language;
 import com.intellij.psi.tree.IElementType;
 import com.intellij.psi.tree.IFileElementType;
 import com.intellij.psi.tree.TokenSet;
+import com.intellij.sql.psi.stubs.SqlFileElementType;
 
-final class EsRestTypes implements EsRestReservedKeywords, EsRestOptionalKeywords {
-    static final IFileElementType FILE = new IFileElementType(EsRestLanguage.INSTANCE);
+final class EsRestTypes {
+    static final IFileElementType FILE =
+            new SqlFileElementType("ES_REST_FILE", EsRestLanguage.INSTANCE);
     static final IElementType REQUEST = type("REQUEST");
     static final IElementType OBJECT = type("OBJECT");
     static final IElementType ARRAY = type("ARRAY");

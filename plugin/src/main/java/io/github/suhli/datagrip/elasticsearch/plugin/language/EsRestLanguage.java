@@ -17,7 +17,7 @@ public final class EsRestLanguage extends SqlLanguageDialectBase {
 
     @Override
     protected TokensHelper createTokensHelper() {
-        return createTokensHelper(EsRestTypes.class);
+        return createTokensHelper(EsRestTokens.class);
     }
 
     @Override
