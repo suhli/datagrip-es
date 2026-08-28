@@ -43,6 +43,17 @@ intellijPlatform {
             untilBuild = provider { null }
         }
     }
+    signing {
+        certificateChain = providers.environmentVariable("CERTIFICATE_CHAIN")
+        privateKey = providers.environmentVariable("PRIVATE_KEY")
+        password = providers.environmentVariable("PRIVATE_KEY_PASSWORD")
+    }
+    publishing {
+        token = providers.environmentVariable("PUBLISH_TOKEN")
+        channels = providers.gradleProperty("pluginVersion").map { version ->
+            listOf(version.substringAfter('-', "default").substringBefore('.').ifEmpty { "default" })
+        }
+    }
     pluginVerification {
         // The JDBC fat JAR is loaded by DataGrip's driver class loader. These
         // bundled libraries are not IntelliJ API consumers and are verified by

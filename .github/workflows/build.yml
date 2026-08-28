@@ -1,0 +1,34 @@
+name: Build
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+jobs:
+  build:
+    name: Test, Verify, Build
+    runs-on: ubuntu-latest
+    steps:
+      - name: Fetch Sources
+        uses: actions/checkout@v4
+
+      - name: Setup Java
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: 21
+
+      - name: Gradle Wrapper Validation
+        uses: gradle/actions/wrapper-validation@v4
+
+      - name: Setup Gradle
+        uses: gradle/actions/setup-gradle@v4
+
+      - name: Test, Plugin Verifier, Build
+        run: ./gradlew test verifyPlugin buildPlugin --no-configuration-cache --console=plain
+
+      - name: Upload plugin artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: plugin-distribution
+          path: plugin/build/distributions/*

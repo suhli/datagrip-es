@@ -109,7 +109,7 @@ public final class EsRestEvaluationHelper extends EvaluationHelperBase {
     protected @NotNull Condition<IElementType> typesCondition() {
         return Conditions.alwaysTrue();
     }
-
+ 
     @Override
     public @Nullable SqlTableType parseQueryTableType(
             @NotNull Project project,

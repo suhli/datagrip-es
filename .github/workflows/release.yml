@@ -1,0 +1,106 @@
+name: Release
+on:
+  workflow_dispatch:
+    inputs:
+      version:
+        description: "Plugin version (SemVer), e.g. 0.1.0 or 0.2.0-beta.1"
+        required: true
+        type: string
+      prerelease:
+        description: "Mark GitHub Release as prerelease"
+        required: false
+        type: boolean
+        default: false
+
+concurrency:
+  group: release-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  release:
+    name: Test, Release, Publish
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    env:
+      PLUGIN_VERSION: ${{ inputs.version }}
+    steps:
+      - name: Validate version
+        shell: bash
+        run: |
+          if [[ ! "$PLUGIN_VERSION" =~ ^[0-9]+\.[0-9]+\.[0-9]+([.-][A-Za-z0-9.-]+)?$ ]]; then
+            echo "Invalid version: $PLUGIN_VERSION"
+            echo "Expected SemVer like 0.1.0 or 0.2.0-beta.1"
+            exit 1
+          fi
+          echo "Releasing v$PLUGIN_VERSION"
+
+      - name: Fetch Sources
+        uses: actions/checkout@v4
+
+      - name: Setup Java
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: 21
+
+      - name: Gradle Wrapper Validation
+        uses: gradle/actions/wrapper-validation@v4
+
+      - name: Setup Gradle
+        uses: gradle/actions/setup-gradle@v4
+
+      - name: Test and verify plugin
+        run: ./gradlew test verifyPlugin -PpluginVersion="$PLUGIN_VERSION" --no-configuration-cache --console=plain
+
+      - name: Build and sign plugin
+        env:
+          CERTIFICATE_CHAIN: ${{ secrets.CERTIFICATE_CHAIN }}
+          PRIVATE_KEY: ${{ secrets.PRIVATE_KEY }}
+          PRIVATE_KEY_PASSWORD: ${{ secrets.PRIVATE_KEY_PASSWORD }}
+        run: ./gradlew buildPlugin signPlugin -PpluginVersion="$PLUGIN_VERSION" --no-configuration-cache --console=plain
+
+      - name: Publish to JetBrains Marketplace
+        env:
+          PUBLISH_TOKEN: ${{ secrets.PUBLISH_TOKEN }}
+          CERTIFICATE_CHAIN: ${{ secrets.CERTIFICATE_CHAIN }}
+          PRIVATE_KEY: ${{ secrets.PRIVATE_KEY }}
+          PRIVATE_KEY_PASSWORD: ${{ secrets.PRIVATE_KEY_PASSWORD }}
+        run: ./gradlew publishPlugin -PpluginVersion="$PLUGIN_VERSION" --no-configuration-cache --console=plain
+
+      - name: Create GitHub Release
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        shell: bash
+        run: |
+          TAG="v${PLUGIN_VERSION}"
+          PRERELEASE_FLAG=""
+          if [[ "${{ inputs.prerelease }}" == "true" ]]; then
+            PRERELEASE_FLAG="--prerelease"
+          fi
+
+          NOTES="$(cat <<EOF
+          ## Elasticsearch REST ${PLUGIN_VERSION}
+
+          DataGrip data source backed by Elasticsearch's standard REST API (no SQL/JDBC driver subscription required).
+
+          ### Runtime requirements
+          - DataGrip 2025.1+ (or IU with Database Tools)
+          - Elasticsearch 7.x, 8.x, or 9.x
+
+          ### Artifacts
+          Plugin zip from this release can also be installed via **Settings → Plugins → Install Plugin from Disk**.
+          EOF
+          )"
+
+          gh release create "$TAG" \
+            --title "$TAG" \
+            --notes "$NOTES" \
+            $PRERELEASE_FLAG \
+            plugin/build/distributions/*
+
+      - name: Upload workflow artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: plugin-${{ env.PLUGIN_VERSION }}
+          path: plugin/build/distributions/*
