@@ -56,6 +56,10 @@ public final class EsJdbcUrl {
         if (supplied != null) {
             supplied.stringPropertyNames().forEach(k -> values.put(k, supplied.getProperty(k)));
         }
+        validateAuthMode(values);
+        if (values.containsKey("requestTimeout") && !values.containsKey("responseTimeout")) {
+            values.put("responseTimeout", values.get("requestTimeout"));
+        }
         boolean ssl = bool(values, "ssl", explicitHttps);
         boolean verifyTls = bool(values, "verifyTls", true);
         int port = raw.getPort() >= 0 ? raw.getPort() : (ssl ? 443 : 9200);
@@ -97,6 +101,14 @@ public final class EsJdbcUrl {
     private static boolean isSecretKey(String key) {
         return "password".equalsIgnoreCase(key) || "apiKey".equalsIgnoreCase(key)
                 || "authorization".equalsIgnoreCase(key);
+    }
+
+    private static void validateAuthMode(Map<String, String> values) throws SQLException {
+        String auth = values.containsKey("auth") ? values.get("auth") : values.get("authType");
+        if (auth != null && !auth.equalsIgnoreCase("none") && !auth.equalsIgnoreCase("basic")
+                && !auth.equalsIgnoreCase("apiKey")) {
+            throw new SQLException("auth must be none, basic, or apiKey", "08001");
+        }
     }
 
     private static boolean bool(Map<String, String> values, String key, boolean fallback) throws SQLException {

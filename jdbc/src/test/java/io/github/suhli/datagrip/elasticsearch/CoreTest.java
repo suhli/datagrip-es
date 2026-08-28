@@ -52,6 +52,9 @@ class CoreTest {
         assertTrue(request.body().contains("{ value }"));
         assertThrows(SQLException.class,
                 () -> RestRequestParser.parse("GET /a\n{}\nGET /b\n{}"));
+        SQLException multiple = assertThrows(SQLException.class,
+                () -> RestRequestParser.parse("GET /a\n\nGET /b"));
+        assertTrue(multiple.getMessage().contains("Multiple"));
         assertThrows(SQLException.class, () -> RestRequestParser.parse("SELECT * FROM index"));
     }
 

@@ -29,6 +29,9 @@ public final class RestRequestParser {
 
         cursor = skipWhitespace(text, pathEnd);
         if (cursor == text.length()) return new ParsedRequest(method, path, null);
+        if (looksLikeRequestLine(text, cursor)) {
+            throw syntax("Multiple REST requests are not allowed");
+        }
         int bodyEnd = scanJsonValue(text, cursor);
         String body = text.substring(cursor, bodyEnd);
         try {
@@ -41,6 +44,15 @@ public final class RestRequestParser {
             throw syntax("Multiple REST requests are not allowed");
         }
         return new ParsedRequest(method, path, body);
+    }
+
+    private static boolean looksLikeRequestLine(String text, int start) {
+        int methodEnd = start;
+        while (methodEnd < text.length() && Character.isLetter(text.charAt(methodEnd))) methodEnd++;
+        String candidate = text.substring(start, methodEnd).toUpperCase(Locale.ROOT);
+        if (!METHODS.contains(candidate)) return false;
+        int pathStart = skipHorizontal(text, methodEnd);
+        return pathStart > methodEnd && pathStart < text.length() && text.charAt(pathStart) == '/';
     }
 
     private static int scanJsonValue(String text, int start) throws SQLException {

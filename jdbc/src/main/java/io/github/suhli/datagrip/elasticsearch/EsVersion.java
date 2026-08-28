@@ -19,13 +19,22 @@ public record EsVersion(String product, String number, String distribution,
             }
             JsonNode root = JSON.readTree(response.body());
             String number = root.path("version").path("number").asText("");
-            String distribution = root.path("version").path("distribution").asText("elasticsearch");
+            String distribution = root.path("version").path("distribution").asText("");
             String tagline = root.path("tagline").asText("");
             if (number.isBlank() || !root.path("version").isObject()) {
                 throw new SQLException("Endpoint is not an Elasticsearch-compatible product", "08001");
             }
             boolean openSearch = "opensearch".equalsIgnoreCase(distribution)
                     || tagline.toLowerCase(java.util.Locale.ROOT).contains("opensearch");
+            boolean elasticHeader = response.headers().entrySet().stream()
+                    .filter(entry -> entry.getKey().equalsIgnoreCase("X-Elastic-Product"))
+                    .flatMap(entry -> entry.getValue().stream())
+                    .anyMatch("Elasticsearch"::equalsIgnoreCase);
+            boolean elasticsearch = "elasticsearch".equalsIgnoreCase(distribution)
+                    || tagline.contains("You Know, for Search") || elasticHeader;
+            if (!openSearch && !elasticsearch) {
+                throw new SQLException("Endpoint is not Elasticsearch or OpenSearch", "08001");
+            }
             String product = openSearch ? "OpenSearch" : "Elasticsearch";
             return new EsVersion(product, number, distribution,
                     root.path("cluster_name").asText(product),

@@ -38,7 +38,7 @@ public final class ElasticsearchDriver implements Driver {
                 choice("verifyTls", "true", "Verify server certificate and hostname", "true", "false"),
                 property("pathPrefix", false, "Reverse-proxy path prefix"),
                 property("connectTimeout", false, "Connect timeout in milliseconds"),
-                property("responseTimeout", false, "Response timeout in milliseconds"),
+                property("requestTimeout", false, "Request timeout in milliseconds"),
                 property("headers", false, "Additional semicolon-separated HTTP headers")
         };
     }
