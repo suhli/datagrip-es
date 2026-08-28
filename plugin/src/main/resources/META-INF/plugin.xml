@@ -42,7 +42,7 @@
             implementationClass="io.github.suhli.datagrip.elasticsearch.plugin.language.EsRestLanguage"/>
         <sql.evaluationHelper
             language="ElasticsearchREST"
-            implementationClass="com.intellij.sql.dialects.DummyEvaluationHelper"/>
+            implementationClass="io.github.suhli.datagrip.elasticsearch.plugin.language.EsRestEvaluationHelper"/>
         <database.driversConfig config="databaseDrivers/elasticsearch-rest.xml"/>
         <postStartupActivity
             implementation="io.github.suhli.datagrip.elasticsearch.plugin.BundledDriverStartupActivity"/>

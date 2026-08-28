@@ -6,6 +6,7 @@ import com.intellij.psi.tree.TokenSet;
 
 final class EsRestTokenTypes implements EsRestReservedTokens, EsRestOptionalTokens {
     static final IFileElementType FILE = new IFileElementType(EsRestLanguage.INSTANCE);
+    static final IElementType REQUEST = type("REQUEST");
     static final IElementType OBJECT = type("OBJECT");
     static final IElementType ARRAY = type("ARRAY");
     static final IElementType METHOD = type("METHOD");

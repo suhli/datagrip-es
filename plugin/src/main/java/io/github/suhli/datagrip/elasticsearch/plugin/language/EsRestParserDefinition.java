@@ -12,6 +12,7 @@ import com.intellij.psi.FileViewProvider;
 import com.intellij.psi.PsiElement;
 import com.intellij.psi.PsiFile;
 import com.intellij.psi.tree.IElementType;
+import com.intellij.psi.TokenType;
 import com.intellij.psi.tree.IFileElementType;
 import com.intellij.psi.tree.TokenSet;
 import org.jetbrains.annotations.NotNull;
@@ -26,10 +27,53 @@ public final class EsRestParserDefinition implements ParserDefinition {
     public @NotNull PsiParser createParser(Project project) {
         return (root, builder) -> {
             PsiBuilder.Marker file = builder.mark();
-            while (!builder.eof()) parseToken(builder);
+            while (!builder.eof()) {
+                skipTopLevel(builder);
+                if (builder.eof()) break;
+                if (builder.getTokenType() == EsRestTokenTypes.METHOD) {
+                    parseRequest(builder);
+                } else {
+                    builder.advanceLexer();
+                }
+            }
             file.done(root);
             return builder.getTreeBuilt();
         };
+    }
+
+    private static void skipTopLevel(PsiBuilder builder) {
+        while (true) {
+            IElementType token = builder.getTokenType();
+            if (token == TokenType.WHITE_SPACE || token == EsRestTokenTypes.COMMENT) {
+                builder.advanceLexer();
+                continue;
+            }
+            break;
+        }
+    }
+
+    private static void parseRequest(PsiBuilder builder) {
+        PsiBuilder.Marker request = builder.mark();
+        builder.advanceLexer(); // METHOD
+        while (true) {
+            IElementType token = builder.getTokenType();
+            if (token == EsRestTokenTypes.PATH
+                    || token == EsRestTokenTypes.COMMENT
+                    || token == TokenType.WHITE_SPACE) {
+                builder.advanceLexer();
+                continue;
+            }
+            break;
+        }
+        if (builder.getTokenType() == EsRestTokenTypes.LBRACE
+                || builder.getTokenType() == EsRestTokenTypes.LBRACKET) {
+            parseToken(builder);
+        } else if (builder.getTokenType() != EsRestTokenTypes.METHOD && !builder.eof()) {
+            while (!builder.eof() && builder.getTokenType() != EsRestTokenTypes.METHOD) {
+                parseToken(builder);
+            }
+        }
+        request.done(EsRestTokenTypes.REQUEST);
     }
 
     private static void parseToken(PsiBuilder builder) {
