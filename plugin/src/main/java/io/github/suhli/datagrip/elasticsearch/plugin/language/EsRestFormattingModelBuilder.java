@@ -1,133 +1,73 @@
 package io.github.suhli.datagrip.elasticsearch.plugin.language;
 
-import com.intellij.formatting.Alignment;
 import com.intellij.formatting.Block;
-import com.intellij.formatting.ChildAttributes;
 import com.intellij.formatting.FormattingContext;
 import com.intellij.formatting.FormattingModel;
 import com.intellij.formatting.FormattingModelBuilder;
 import com.intellij.formatting.FormattingModelProvider;
-import com.intellij.formatting.Indent;
 import com.intellij.formatting.Spacing;
-import com.intellij.formatting.Wrap;
 import com.intellij.lang.ASTNode;
-import com.intellij.psi.PsiElement;
-import com.intellij.psi.TokenType;
+import com.intellij.openapi.editor.Document;
+import com.intellij.openapi.util.TextRange;
+import com.intellij.psi.PsiDocumentManager;
+import com.intellij.psi.PsiFile;
 import com.intellij.psi.codeStyle.CodeStyleSettings;
 import com.intellij.psi.formatter.common.AbstractBlock;
-import com.intellij.psi.tree.IElementType;
+
 import org.jetbrains.annotations.NotNull;
 import org.jetbrains.annotations.Nullable;
 
-import java.util.ArrayList;
 import java.util.List;
 
+/**
+ * Applies JSON-only pretty printing during CodeStyle reformat (Ctrl+Alt+L) and then
+ * returns a no-op formatting model so SQL/PSI formatters do not add block indentation.
+ */
 public final class EsRestFormattingModelBuilder implements FormattingModelBuilder {
     @Override
     public @NotNull FormattingModel createModel(@NotNull FormattingContext context) {
-        PsiElement element = context.getContainingFile();
+        PsiFile file = context.getContainingFile();
+        if (EsRestFileDetector.isEsRestFile(file)) {
+            applyJsonFormatting(context, file);
+        }
         CodeStyleSettings settings = context.getCodeStyleSettings();
         return FormattingModelProvider.createFormattingModelForPsiFile(
-                element.getContainingFile(),
-                new EsRestBlock(element.getNode(), null),
+                file,
+                new NoopBlock(file.getNode()),
                 settings);
     }
 
-    private static final class EsRestBlock extends AbstractBlock {
-        private final Indent indent;
+    private static void applyJsonFormatting(@NotNull FormattingContext context, @NotNull PsiFile file) {
+        Document document = PsiDocumentManager.getInstance(file.getProject()).getDocument(file);
+        if (document == null) return;
+        TextRange range = context.getFormattingRange();
+        if (range == null) {
+            range = TextRange.create(0, document.getTextLength());
+        }
+        String original = document.getText(range);
+        String formatted = EsRestDocumentFormatter.format(original);
+        if (formatted.equals(original)) return;
+        document.replaceString(range.getStartOffset(), range.getEndOffset(), formatted);
+    }
 
-        EsRestBlock(ASTNode node, Indent indent) {
-            super(node, (Wrap) null, (Alignment) null);
-            this.indent = indent;
+    private static final class NoopBlock extends AbstractBlock {
+        NoopBlock(ASTNode node) {
+            super(node, null, null);
         }
 
         @Override
-        protected List<Block> buildChildren() {
-            List<Block> children = new ArrayList<>();
-            boolean container = isContainer(myNode.getElementType());
-            for (ASTNode child = myNode.getFirstChildNode(); child != null;
-                    child = child.getTreeNext()) {
-                if (child.getElementType() == TokenType.WHITE_SPACE) continue;
-                IElementType type = child.getElementType();
-                Indent childIndent = container && !isBracket(type)
-                        ? Indent.getNormalIndent()
-                        : Indent.getNoneIndent();
-                children.add(new EsRestBlock(child, childIndent));
-            }
-            return children;
+        protected @NotNull List<Block> buildChildren() {
+            return List.of();
         }
 
         @Override
         public @Nullable Spacing getSpacing(@Nullable Block child1, @NotNull Block child2) {
-            if (!(child2 instanceof EsRestBlock right)) return null;
-            EsRestBlock left = child1 instanceof EsRestBlock block ? block : null;
-            IElementType rightType = right.myNode.getElementType();
-            IElementType leftType = left == null ? null : left.myNode.getElementType();
-
-            if (rightType == EsRestTypes.METHOD) {
-                return spacing(0, left == null ? 0 : 2);
-            }
-            if (leftType == EsRestTypes.METHOD && rightType == EsRestTypes.PATH) {
-                return spacing(1, 0);
-            }
-            if (leftType == EsRestTypes.PATH && rightType == EsRestTypes.COMMENT) {
-                return spacing(1, 0);
-            }
-            if (leftType == EsRestTypes.PATH || leftType == EsRestTypes.COMMENT) {
-                return spacing(0, 1);
-            }
-            if ((leftType == EsRestTypes.LBRACE && rightType == EsRestTypes.RBRACE)
-                    || (leftType == EsRestTypes.LBRACKET
-                    && rightType == EsRestTypes.RBRACKET)) {
-                return spacing(0, 0);
-            }
-            if (leftType == EsRestTypes.LBRACE || leftType == EsRestTypes.LBRACKET
-                    || leftType == EsRestTypes.COMMA || isClosing(rightType)) {
-                return spacing(0, 1);
-            }
-            if (rightType == EsRestTypes.COLON || rightType == EsRestTypes.COMMA) {
-                return spacing(0, 0);
-            }
-            if (leftType == EsRestTypes.COLON) return spacing(1, 0);
-            return spacing(0, 0);
-        }
-
-        @Override
-        public @NotNull ChildAttributes getChildAttributes(int newChildIndex) {
-            return new ChildAttributes(
-                    isContainer(myNode.getElementType())
-                            ? Indent.getNormalIndent()
-                            : Indent.getNoneIndent(),
-                    null);
-        }
-
-        @Override
-        public @Nullable Indent getIndent() {
-            return indent;
+            return null;
         }
 
         @Override
         public boolean isLeaf() {
-            return myNode.getFirstChildNode() == null;
-        }
-
-        private static Spacing spacing(int spaces, int lineFeeds) {
-            return Spacing.createSpacing(spaces, spaces, lineFeeds, true, 2);
-        }
-
-        private static boolean isContainer(IElementType type) {
-            return type == EsRestTypes.REQUEST
-                    || type == EsRestTypes.OBJECT
-                    || type == EsRestTypes.ARRAY;
-        }
-
-        private static boolean isBracket(IElementType type) {
-            return type == EsRestTypes.LBRACE || type == EsRestTypes.RBRACE
-                    || type == EsRestTypes.LBRACKET || type == EsRestTypes.RBRACKET;
-        }
-
-        private static boolean isClosing(IElementType type) {
-            return type == EsRestTypes.RBRACE || type == EsRestTypes.RBRACKET;
+            return true;
         }
     }
 }

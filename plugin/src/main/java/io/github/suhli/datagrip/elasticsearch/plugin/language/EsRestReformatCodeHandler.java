@@ -9,11 +9,10 @@ import com.intellij.openapi.editor.actionSystem.EditorActionHandler;
 import com.intellij.openapi.project.Project;
 import com.intellij.openapi.util.TextRange;
 import com.intellij.psi.PsiDocumentManager;
-import com.intellij.psi.PsiFile;
 
 import org.jetbrains.annotations.NotNull;
 
-/** Routes database-console reformat to the Elasticsearch REST formatter. */
+/** Routes editor reformat shortcuts to JSON-only pretty printing. */
 public final class EsRestReformatCodeHandler extends EditorActionHandler {
     private final EditorActionHandler delegate;
 
@@ -24,28 +23,21 @@ public final class EsRestReformatCodeHandler extends EditorActionHandler {
     @Override
     protected boolean isEnabledForCaret(
             @NotNull Editor editor, @NotNull Caret caret, DataContext dataContext) {
-        if (isEsRestEditor(editor)) return true;
+        if (EsRestFileDetector.isEsRestDocument(editor.getProject(), editor.getDocument())) return true;
         return delegate.isEnabled(editor, caret, dataContext);
     }
 
     @Override
     protected void doExecute(@NotNull Editor editor, @NotNull Caret caret, DataContext dataContext) {
-        if (!isEsRestEditor(editor)) {
+        Project project = editor.getProject();
+        if (project == null || !EsRestFileDetector.isEsRestDocument(project, editor.getDocument())) {
             delegate.execute(editor, caret, dataContext);
             return;
         }
-        Project project = editor.getProject();
-        if (project == null) return;
 
         PsiDocumentManager documentManager = PsiDocumentManager.getInstance(project);
         documentManager.commitAllDocuments();
         Document document = editor.getDocument();
-        PsiFile file = documentManager.getPsiFile(document);
-        if (file == null || file.getLanguage() != EsRestLanguage.INSTANCE) {
-            delegate.execute(editor, caret, dataContext);
-            return;
-        }
-
         TextRange range = reformatRange(editor);
         String original = document.getText(range);
         String formatted = EsRestDocumentFormatter.format(original);
@@ -64,12 +56,5 @@ public final class EsRestReformatCodeHandler extends EditorActionHandler {
                     editor.getSelectionModel().getSelectionEnd());
         }
         return new TextRange(0, editor.getDocument().getTextLength());
-    }
-
-    private static boolean isEsRestEditor(@NotNull Editor editor) {
-        Project project = editor.getProject();
-        if (project == null) return false;
-        PsiFile file = PsiDocumentManager.getInstance(project).getPsiFile(editor.getDocument());
-        return file != null && file.getLanguage() == EsRestLanguage.INSTANCE;
     }
 }

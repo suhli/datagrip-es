@@ -34,9 +34,20 @@
         <lang.syntaxHighlighterFactory
             language="ElasticsearchREST"
             implementationClass="io.github.suhli.datagrip.elasticsearch.plugin.language.EsRestSyntaxHighlighterFactory"/>
+        <lang.pairedBraceMatcher
+            language="ElasticsearchREST"
+            implementationClass="io.github.suhli.datagrip.elasticsearch.plugin.language.EsRestBraceMatcher"/>
+        <lang.braceMatcher
+            language="ElasticsearchREST"
+            implementationClass="io.github.suhli.datagrip.elasticsearch.plugin.language.EsRestPairedBraceMatcher"/>
+        <editorHighlighterProvider
+            filetype="Elasticsearch REST"
+            implementationClass="io.github.suhli.datagrip.elasticsearch.plugin.language.EsRestEditorHighlighterProvider"/>
         <lang.formatter
             language="ElasticsearchREST"
             implementationClass="io.github.suhli.datagrip.elasticsearch.plugin.language.EsRestFormattingModelBuilder"/>
+        <preFormatProcessor
+            implementation="io.github.suhli.datagrip.elasticsearch.plugin.language.EsRestPreFormatProcessor"/>
         <sql.dialect
             dbms="ELASTICSEARCH"
             implementationClass="io.github.suhli.datagrip.elasticsearch.plugin.language.EsRestLanguage"/>
