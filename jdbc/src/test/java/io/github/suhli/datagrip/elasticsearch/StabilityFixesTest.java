@@ -102,8 +102,12 @@ class StabilityFixesTest {
                 statement.cancel();
                 SQLException error = future.get(5, TimeUnit.SECONDS);
                 assertNotNull(error);
+                assertTrue(error.getMessage().toLowerCase().contains("cancel"), error.getMessage());
+                assertEquals("HY008", error.getSQLState());
                 transport.release();
                 assertDoesNotThrow(() -> other.executeQuery("GET /users/_search\n{\"size\":1}"));
+                // Same statement can be reused after cancel.
+                assertDoesNotThrow(() -> statement.executeQuery("GET /users/_search\n{\"size\":1}"));
                 executor.shutdownNow();
             }
         }

@@ -15,7 +15,7 @@ import java.util.Map;
 import java.util.Set;
 
 public final class JsonResultMapper {
-    static final int MAX_RAW_RESPONSE_BYTES = 5 * 1024 * 1024;
+    static final int MAX_RAW_RESPONSE_BYTES = 2 * 1024 * 1024;
 
     private static final ObjectMapper JSON = new ObjectMapper();
 
@@ -31,7 +31,8 @@ public final class JsonResultMapper {
             JsonNode hits = root.path("hits").path("hits");
             if (hits.isArray()) {
                 List<Map<String, Object>> records = searchHits(hits);
-                return new MappedResponse(tabular(records), json, true);
+                // Structured success: do not retain the full raw JSON string.
+                return new MappedResponse(tabular(records), null, true);
             }
         }
         List<Map<String, Object>> records = new ArrayList<>();
@@ -47,9 +48,11 @@ public final class JsonResultMapper {
         }
         TabularResult structured = tabular(records);
         if (isMeaningfulStructure(structured)) {
-            return new MappedResponse(structured, json, true);
+            // Structured success: drop raw body to avoid double memory retention.
+            return new MappedResponse(structured, null, true);
         }
-        return new MappedResponse(rawFallback(json), json, false);
+        String truncated = truncateRaw(json);
+        return new MappedResponse(rawFallback(truncated), truncated, false);
     }
 
     /** Legacy helper retained for unstructured responses. */
@@ -67,12 +70,11 @@ public final class JsonResultMapper {
                 !column.label().equals("value") && !column.label().equals("_response"));
     }
 
-    private static TabularResult rawFallback(String json) {
-        String body = truncateRaw(json);
+    private static TabularResult rawFallback(String body) {
         return new TabularResult(
                 List.of(new TabularResult.Column("_response", Types.LONGVARCHAR, "JSON")),
                 List.of(List.of(body)),
-                json,
+                body,
                 false);
     }
 

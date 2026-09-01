@@ -3,7 +3,6 @@ package io.github.suhli.datagrip.elasticsearch;
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import org.apache.hc.client5.http.ConnectTimeoutException;
-import org.apache.hc.client5.http.HttpHostConnectException;
 import org.apache.hc.core5.http.ConnectionRequestTimeoutException;
 
 import java.io.IOException;
@@ -25,6 +24,7 @@ import java.util.concurrent.Executor;
 
 final class JdbcProxies {
     private static final ObjectMapper JSON = new ObjectMapper();
+    static final int MAPPING_BATCH_SIZE = 50;
 
     private JdbcProxies() {}
 
@@ -97,7 +97,13 @@ final class JdbcProxies {
             if (objectMethod(proxy, method, args) != NO_RESULT) return objectMethod(proxy, method, args);
             if (name.equals("close")) { state.close(); return null; }
             if (name.equals("isClosed")) return state.closed;
-            if (name.equals("isValid")) return isValid(state, args == null ? 0 : (int) args[0]);
+            if (name.equals("isValid")) {
+                int timeoutSeconds = args == null ? 0 : (int) args[0];
+                if (timeoutSeconds < 0) {
+                    throw new SQLException("Connection.isValid timeout must be non-negative", "HY092");
+                }
+                return isValid(state, timeoutSeconds);
+            }
             requireOpen(state);
             return switch (name) {
                 case "createStatement" -> statement(state, null);
@@ -140,16 +146,25 @@ final class JdbcProxies {
         }
     }
 
-    private static boolean isValid(State state, int timeout) {
-        if (state.closed || timeout < 0) return false;
+    /**
+     * @param timeoutSeconds JDBC {@link Connection#isValid(int)} timeout in seconds
+     */
+    private static boolean isValid(State state, int timeoutSeconds) {
+        if (state.closed) return false;
         try {
-            Transport.ExecuteOptions options = Transport.ExecuteOptions.of(
-                    timeout == 0 ? (int) state.config.responseTimeout().toMillis() : timeout);
+            // timeoutSeconds == 0 → no isValid-specific override (network/default timeout)
+            // timeoutSeconds > 0  → convert seconds to milliseconds for this health check only
+            int timeoutMillis = timeoutSeconds == 0
+                    ? 0
+                    : Math.multiplyExact(timeoutSeconds, 1000);
+            Transport.ExecuteOptions options = Transport.ExecuteOptions.of(timeoutMillis);
             Transport.Response response = state.transport.execute(new Transport.Request(
                     "GET", state.config.endpoint().resolve("/"), Map.of(), null), options);
             return response.successful();
         } catch (InterruptedIOException e) {
             Thread.currentThread().interrupt();
+            return false;
+        } catch (ArithmeticException e) {
             return false;
         } catch (Exception e) {
             return false;
@@ -288,8 +303,7 @@ final class JdbcProxies {
                         new Transport.Request(request.method(), uri, headers, request.body()),
                         new Transport.ExecuteOptions(timeoutMillis, cancellation));
                 if (cancellation.isCancelled()) {
-                    throw new SQLTimeoutException(request.method() + " " + request.path()
-                            + " cancelled");
+                    throw cancelledException(request);
                 }
                 if (!response.successful()) {
                     throw EsSqlException.from(response, request.method(), request.path());
@@ -301,11 +315,8 @@ final class JdbcProxies {
                             List.of(List.of(response.status())));
                 } else {
                     JsonResultMapper.MappedResponse mapped = JsonResultMapper.mapResponse(response.body());
-                    result = mapped.tabular().structured()
-                            ? new TabularResult(mapped.tabular().columns(), mapped.tabular().rows(),
-                            mapped.rawBody(), true)
-                            : mapped.tabular();
-                    lastRawBody = mapped.rawBody();
+                    result = mapped.tabular();
+                    lastRawBody = mapped.structured() ? null : mapped.rawBody();
                 }
                 if (maxRows > 0 && result.rows().size() > maxRows) {
                     result = new TabularResult(result.columns(), result.rows().subList(0, maxRows),
@@ -314,9 +325,11 @@ final class JdbcProxies {
                 return resultSet(result, this);
             } catch (SQLTimeoutException e) {
                 throw e;
+            } catch (SQLException e) {
+                throw e;
             } catch (IOException e) {
                 if (cancellation.isCancelled()) {
-                    throw new SQLTimeoutException(request.method() + " " + request.path() + " cancelled");
+                    throw cancelledException(request);
                 }
                 SQLTimeoutException timeout = asTimeout(e, request, timeoutMillis);
                 if (timeout != null) throw timeout;
@@ -324,6 +337,12 @@ final class JdbcProxies {
             } finally {
                 if (runningCancellation == cancellation) runningCancellation = null;
             }
+        }
+
+        private static SQLException cancelledException(RestRequestParser.ParsedRequest request) {
+            return new SQLException(
+                    "Elasticsearch request was cancelled: " + request.method() + " " + request.path(),
+                    "HY008");
         }
 
         private int resolveTimeoutMillis() {
@@ -334,17 +353,13 @@ final class JdbcProxies {
 
         private static SQLTimeoutException asTimeout(
                 IOException error, RestRequestParser.ParsedRequest request, int timeoutMillis) {
-            if (error instanceof InterruptedIOException interrupted) {
-                if (Thread.currentThread().isInterrupted() || interrupted instanceof SocketTimeoutException) {
-                    return new SQLTimeoutException(request.method() + " " + request.path()
-                            + " timed out after " + timeoutMillis + " ms");
-                }
-            }
-            if (error instanceof ConnectTimeoutException || error instanceof ConnectionRequestTimeoutException
-                    || error instanceof HttpHostConnectException) {
+            if (error instanceof SocketTimeoutException
+                    || error instanceof ConnectTimeoutException
+                    || error instanceof ConnectionRequestTimeoutException) {
                 return new SQLTimeoutException(request.method() + " " + request.path()
                         + " timed out after " + timeoutMillis + " ms");
             }
+            // InterruptedIOException after an explicit cancel is handled by the caller.
             return null;
         }
 
@@ -542,7 +557,8 @@ final class JdbcProxies {
             }
             List<List<Object>> result = new ArrayList<>();
             for (MetadataCache.IndexInfo index : indices()) {
-                if (like(index.name(), pattern)) {
+                if (JdbcLikePattern.matches(index.name(), pattern)
+                        || (pattern != null && index.name().equals(pattern))) {
                     String remarks = "health=" + index.health() + ", status=" + index.status()
                             + ", docs=" + index.docsCount() + ", store=" + index.storeSize();
                     result.add(Arrays.asList(state.version.clusterName(), null, index.name(), "TABLE", remarks,
@@ -559,10 +575,13 @@ final class JdbcProxies {
             }
             List<List<Object>> result = new ArrayList<>();
             for (var index : mappingsForTable(tablePattern).entrySet()) {
-                if (!like(index.getKey(), tablePattern)) continue;
+                if (!(JdbcLikePattern.matches(index.getKey(), tablePattern)
+                        || (tablePattern != null && index.getKey().equals(tablePattern)))) {
+                    continue;
+                }
                 int ordinal = 1;
                 for (MappingFlattener.Field field : MappingFlattener.flatten(index.getValue())) {
-                    if (like(field.name(), columnPattern)) {
+                    if (JdbcLikePattern.matches(field.name(), columnPattern)) {
                         result.add(Arrays.asList(state.version.clusterName(), null, index.getKey(), field.name(),
                                 field.jdbcType(), field.esType(), 0, null, null, 10,
                                 DatabaseMetaData.columnNullableUnknown,
@@ -576,19 +595,36 @@ final class JdbcProxies {
         }
 
         private Map<String, JsonNode> mappingsForTable(String tablePattern) throws SQLException {
+            List<String> matched = resolveTableNames(tablePattern);
+            return loadMappingsForIndices(matched);
+        }
+
+        /**
+         * Resolves a JDBC tableNamePattern to concrete index names.
+         * Exact matches against known indices win over LIKE {@code _} wildcards.
+         */
+        private List<String> resolveTableNames(String tablePattern) throws SQLException {
+            List<MetadataCache.IndexInfo> known = indices();
             if (tablePattern == null || tablePattern.equals("%")) {
-                return loadMappingsForIndices(indices().stream()
-                        .map(MetadataCache.IndexInfo::name)
-                        .filter(name -> like(name, tablePattern))
-                        .toList());
+                return known.stream().map(MetadataCache.IndexInfo::name).toList();
             }
-            if (containsJdbcWildcard(tablePattern)) {
-                String esPattern = jdbcPatternToEsWildcard(tablePattern);
-                return fetchMappingsByPath("/" + esPattern + "/_mapping");
+
+            // Prefer exact index-name match so names like game_logs are concrete.
+            for (MetadataCache.IndexInfo index : known) {
+                if (index.name().equals(tablePattern)) {
+                    return List.of(index.name());
+                }
             }
-            JsonNode cached = state.metadataCache.mappingIfFresh(tablePattern);
-            if (cached != null) return Map.of(tablePattern, cached);
-            return fetchMappingsByPath("/" + tablePattern + "/_mapping");
+
+            String literal = JdbcLikePattern.literalOrNull(tablePattern);
+            if (literal != null) {
+                return List.of(literal);
+            }
+
+            return known.stream()
+                    .map(MetadataCache.IndexInfo::name)
+                    .filter(name -> JdbcLikePattern.matches(name, tablePattern))
+                    .toList();
         }
 
         private Map<String, JsonNode> loadMappingsForIndices(List<String> indexNames) throws SQLException {
@@ -599,8 +635,21 @@ final class JdbcProxies {
                 if (cached != null) result.put(index, cached);
                 else missing.add(index);
             }
-            if (!missing.isEmpty()) {
-                result.putAll(fetchMappingsByPath("/" + String.join(",", missing) + "/_mapping"));
+            if (missing.isEmpty()) return result;
+
+            final int batchSize = MAPPING_BATCH_SIZE;
+            for (int offset = 0; offset < missing.size(); offset += batchSize) {
+                List<String> batch = missing.subList(offset, Math.min(offset + batchSize, missing.size()));
+                String path = "/" + String.join(",", batch) + "/_mapping";
+                try {
+                    result.putAll(fetchMappingsByPath(path));
+                } catch (SQLException e) {
+                    throw new SQLException(
+                            "Mapping request failed for batch [" + String.join(",", batch) + "]: "
+                                    + e.getMessage(),
+                            e.getSQLState(),
+                            e);
+                }
             }
             return result;
         }
@@ -719,7 +768,10 @@ final class JdbcProxies {
                 case "getTimestamp" -> timestamp(value(args[0]));
                 case "getMetaData" -> resultSetMetadata(result);
                 case "getStatement" -> owner == null ? null : owner.self;
-                case "getRow" -> cursor + 1;
+                case "getRow" -> {
+                    if (cursor < 0 || cursor >= result.rows().size()) yield 0;
+                    yield cursor + 1;
+                }
                 case "isBeforeFirst" -> cursor < 0 && !result.rows().isEmpty();
                 case "isAfterLast" -> cursor >= result.rows().size();
                 case "isFirst" -> cursor == 0 && !result.rows().isEmpty();
@@ -899,35 +951,6 @@ final class JdbcProxies {
 
     private static MetadataSchemas.Column col(String name, int type) {
         return new MetadataSchemas.Column(name, type, EsTypes.jdbcTypeName(type));
-    }
-
-    private static boolean like(String value, String pattern) {
-        if (pattern == null || pattern.equals("%")) return true;
-        StringBuilder regex = new StringBuilder("(?i)");
-        for (int i = 0; i < pattern.length(); i++) {
-            char c = pattern.charAt(i);
-            if (c == '%') regex.append(".*");
-            else if (c == '_') regex.append('.');
-            else regex.append(java.util.regex.Pattern.quote(String.valueOf(c)));
-        }
-        return value.matches(regex.toString());
-    }
-
-    private static boolean containsJdbcWildcard(String pattern) {
-        return pattern.indexOf('%') >= 0 || pattern.indexOf('_') >= 0;
-    }
-
-    static String jdbcPatternToEsWildcard(String pattern) {
-        if (pattern == null || pattern.equals("%")) return "*";
-        StringBuilder result = new StringBuilder();
-        for (int i = 0; i < pattern.length(); i++) {
-            char c = pattern.charAt(i);
-            if (c == '%') result.append('*');
-            else if (c == '_') result.append('?');
-            else if (c == '*' || c == '?' || c == '\\') result.append('\\').append(c);
-            else result.append(c);
-        }
-        return result.toString();
     }
 
     private static int versionPart(String version, int index) {

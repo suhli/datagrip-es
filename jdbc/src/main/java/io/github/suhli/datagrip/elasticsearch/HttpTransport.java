@@ -1,5 +1,6 @@
 package io.github.suhli.datagrip.elasticsearch;
 
+import org.apache.hc.client5.http.classic.methods.HttpUriRequestBase;
 import org.apache.hc.client5.http.config.RequestConfig;
 import org.apache.hc.client5.http.impl.classic.CloseableHttpClient;
 import org.apache.hc.client5.http.impl.classic.HttpClients;
@@ -115,37 +116,47 @@ public final class HttpTransport implements Transport {
                 .setResponseTimeout(Timeout.ofMilliseconds(responseTimeout))
                 .build();
         context.setRequestConfig(requestConfig);
-        Transport.Cancellation cancellation = options == null ? null : options.cancellation();
-        if (cancellation instanceof Transport.RequestCancellation) {
-            ((Transport.RequestCancellation) cancellation).bindExecution(Thread.currentThread());
-        }
-        var builder = org.apache.hc.core5.http.io.support.ClassicRequestBuilder
-                .create(request.method())
-                .setUri(request.uri());
-        defaultHeaders.forEach(builder::addHeader);
-        request.headers().forEach(builder::setHeader);
+
+        HttpUriRequestBase httpRequest = new HttpUriRequestBase(request.method(), request.uri());
+        defaultHeaders.forEach(httpRequest::addHeader);
+        request.headers().forEach(httpRequest::setHeader);
         if (request.body() != null) {
             String contentType = request.headers().entrySet().stream()
                     .filter(entry -> entry.getKey().equalsIgnoreCase("Content-Type"))
                     .map(Map.Entry::getValue)
                     .findFirst()
                     .orElse(ContentType.APPLICATION_JSON.getMimeType());
-            builder.setEntity(new StringEntity(request.body(), ContentType.parse(contentType)));
+            httpRequest.setEntity(new StringEntity(request.body(), ContentType.parse(contentType)));
         }
-        Response result = client.execute(builder.build(), context, response -> {
-            Map<String, List<String>> headers = new LinkedHashMap<>();
-            for (Header header : response.getHeaders()) {
-                headers.computeIfAbsent(header.getName(), ignored -> new ArrayList<>()).add(header.getValue());
+
+        Transport.Cancellation cancellation = options == null ? null : options.cancellation();
+        if (cancellation instanceof Transport.RequestCancellation token) {
+            // Prefer real request cancel; interrupt is only a secondary assist.
+            token.bind(httpRequest::cancel);
+            token.bindExecution(Thread.currentThread());
+        }
+
+        try {
+            Response result = client.execute(httpRequest, context, response -> {
+                Map<String, List<String>> headers = new LinkedHashMap<>();
+                for (Header header : response.getHeaders()) {
+                    headers.computeIfAbsent(header.getName(), ignored -> new ArrayList<>()).add(header.getValue());
+                }
+                String body = response.getEntity() == null ? "" : EntityUtils.toString(response.getEntity());
+                return new Response(response.getCode(), Map.copyOf(headers), body);
+            });
+            if (LOG.isLoggable(Level.FINE)) {
+                long durationMillis = (System.nanoTime() - started) / 1_000_000L;
+                LOG.fine(() -> request.method() + " " + request.uri().getRawPath()
+                        + " -> HTTP " + result.status() + " in " + durationMillis + " ms");
             }
-            String body = response.getEntity() == null ? "" : EntityUtils.toString(response.getEntity());
-            return new Response(response.getCode(), Map.copyOf(headers), body);
-        });
-        if (LOG.isLoggable(Level.FINE)) {
-            long durationMillis = (System.nanoTime() - started) / 1_000_000L;
-            LOG.fine(() -> request.method() + " " + request.uri().getRawPath()
-                    + " -> HTTP " + result.status() + " in " + durationMillis + " ms");
+            return result;
+        } finally {
+            // Do not leave a stale interrupt flag for the caller's next work.
+            if (cancellation != null && cancellation.isCancelled()) {
+                Thread.interrupted();
+            }
         }
-        return result;
     }
 
     private long resolveResponseTimeout(ExecuteOptions options) {

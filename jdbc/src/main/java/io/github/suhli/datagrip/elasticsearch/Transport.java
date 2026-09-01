@@ -26,9 +26,17 @@ public interface Transport extends Closeable {
         public boolean successful() { return status >= 200 && status < 300; }
     }
 
+    /**
+     * Per-request options. {@code timeoutMillis <= 0} means "no override" —
+     * use connection network timeout or transport default.
+     */
     record ExecuteOptions(int timeoutMillis, Cancellation cancellation) {
         public static ExecuteOptions of(int timeoutMillis) {
             return new ExecuteOptions(timeoutMillis, null);
+        }
+
+        public static ExecuteOptions none() {
+            return new ExecuteOptions(0, null);
         }
     }
 
@@ -38,28 +46,50 @@ public interface Transport extends Closeable {
         boolean isCancelled();
     }
 
+    /**
+     * One-shot cancellation token for a single execution.
+     * A new instance must be created for every request.
+     */
     final class RequestCancellation implements Cancellation {
         private final AtomicBoolean cancelled = new AtomicBoolean();
+        private final Object lock = new Object();
         private volatile Runnable abortAction;
         private volatile Thread executingThread;
 
-        void bind(Runnable abort) {
-            abortAction = abort;
-            if (cancelled.get()) abort.run();
+        /** Bind the real HTTP request abort action (e.g. {@code HttpUriRequestBase::cancel}). */
+        public void bind(Runnable abort) {
+            synchronized (lock) {
+                abortAction = abort;
+                if (cancelled.get() && abort != null) {
+                    abort.run();
+                }
+            }
         }
 
         void bindExecution(Thread thread) {
             executingThread = thread;
-            if (cancelled.get()) thread.interrupt();
+            if (cancelled.get() && thread != null) {
+                thread.interrupt();
+            }
         }
 
         @Override
         public void cancel() {
-            if (cancelled.compareAndSet(false, true)) {
-                Runnable abort = abortAction;
-                if (abort != null) abort.run();
-                Thread thread = executingThread;
-                if (thread != null) thread.interrupt();
+            if (!cancelled.compareAndSet(false, true)) return;
+            Runnable abort;
+            synchronized (lock) {
+                abort = abortAction;
+            }
+            if (abort != null) {
+                try {
+                    abort.run();
+                } catch (RuntimeException ignored) {
+                    // Abort must not throw out of cancel().
+                }
+            }
+            Thread thread = executingThread;
+            if (thread != null) {
+                thread.interrupt();
             }
         }
 
