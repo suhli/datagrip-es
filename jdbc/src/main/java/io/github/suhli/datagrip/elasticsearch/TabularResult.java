@@ -1,10 +1,18 @@
 package io.github.suhli.datagrip.elasticsearch;
 
-import java.util.List;
 import java.util.ArrayList;
 import java.util.Collections;
+import java.util.List;
 
-public record TabularResult(List<Column> columns, List<List<Object>> rows) {
+public record TabularResult(
+        List<Column> columns,
+        List<List<Object>> rows,
+        String rawBody,
+        boolean structured) {
+    public TabularResult(List<Column> columns, List<List<Object>> rows) {
+        this(columns, rows, null, true);
+    }
+
     public TabularResult {
         columns = List.copyOf(columns);
         rows = rows.stream()

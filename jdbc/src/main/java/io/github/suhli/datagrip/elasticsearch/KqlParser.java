@@ -2,6 +2,7 @@ package io.github.suhli.datagrip.elasticsearch;
 
 import java.sql.SQLException;
 import java.util.ArrayList;
+import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Locale;
 import java.util.Map;
@@ -9,17 +10,23 @@ import java.util.Map;
 /** Parses KQL and converts it to Elasticsearch Query DSL. */
 final class KqlParser {
     private final List<Token> tokens;
+    private final EsVersion version;
     private int cursor;
 
-    private KqlParser(String input) throws SQLException {
+    private KqlParser(String input, EsVersion version) throws SQLException {
         this.tokens = tokenize(input);
+        this.version = version;
     }
 
     static Map<String, Object> parse(String input) throws SQLException {
+        return parse(input, null);
+    }
+
+    static Map<String, Object> parse(String input, EsVersion version) throws SQLException {
         if (input == null || input.isBlank()) {
             return Map.of("match_all", Map.of());
         }
-        KqlParser parser = new KqlParser(input);
+        KqlParser parser = new KqlParser(input, version);
         Map<String, Object> query = parser.parseOr(null);
         parser.expect(Type.END, "Unexpected token");
         return query;
@@ -86,7 +93,7 @@ final class KqlParser {
         return valueQuery(inheritedField, first);
     }
 
-    private static Map<String, Object> valueQuery(String field, Token value) {
+    private Map<String, Object> valueQuery(String field, Token value) {
         if (field == null) {
             if (containsWildcard(value.text) && !value.quoted) {
                 return Map.of("query_string", Map.of(
@@ -103,12 +110,19 @@ final class KqlParser {
             return Map.of("exists", Map.of("field", field));
         }
         if (containsWildcard(value.text) && !value.quoted) {
-            return Map.of("wildcard", Map.of(field, Map.of(
-                    "value", value.text,
-                    "case_insensitive", true)));
+            return Map.of("wildcard", Map.of(field, wildcardOptions(value.text)));
         }
         String queryType = value.quoted ? "match_phrase" : "match";
         return Map.of(queryType, Map.of(field, value.text));
+    }
+
+    private Map<String, Object> wildcardOptions(String pattern) {
+        Map<String, Object> options = new LinkedHashMap<>();
+        options.put("value", pattern);
+        if (version == null || version.supportsCaseInsensitiveWildcard()) {
+            options.put("case_insensitive", true);
+        }
+        return options;
     }
 
     private static Map<String, Object> rangeQuery(String field, Type operator, String value) {

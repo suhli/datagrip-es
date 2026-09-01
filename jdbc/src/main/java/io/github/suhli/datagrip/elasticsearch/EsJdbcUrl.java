@@ -6,6 +6,7 @@ import java.nio.charset.StandardCharsets;
 import java.sql.SQLException;
 import java.time.Duration;
 import java.util.LinkedHashMap;
+import java.util.Locale;
 import java.util.Map;
 import java.util.Properties;
 
@@ -99,8 +100,9 @@ public final class EsJdbcUrl {
     }
 
     private static boolean isSecretKey(String key) {
-        return "password".equalsIgnoreCase(key) || "apiKey".equalsIgnoreCase(key)
-                || "authorization".equalsIgnoreCase(key);
+        String lower = key.toLowerCase(Locale.ROOT);
+        return "password".equals(lower) || "apikey".equals(lower) || "authorization".equals(lower)
+                || "token".equals(lower) || lower.startsWith("header.") || "headers".equals(lower);
     }
 
     private static void validateAuthMode(Map<String, String> values) throws SQLException {

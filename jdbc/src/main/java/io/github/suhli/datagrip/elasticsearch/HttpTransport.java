@@ -4,6 +4,7 @@ import org.apache.hc.client5.http.config.RequestConfig;
 import org.apache.hc.client5.http.impl.classic.CloseableHttpClient;
 import org.apache.hc.client5.http.impl.classic.HttpClients;
 import org.apache.hc.client5.http.impl.io.PoolingHttpClientConnectionManagerBuilder;
+import org.apache.hc.client5.http.protocol.HttpClientContext;
 import org.apache.hc.client5.http.ssl.NoopHostnameVerifier;
 import org.apache.hc.client5.http.ssl.SSLConnectionSocketFactoryBuilder;
 import org.apache.hc.core5.http.ContentType;
@@ -30,6 +31,9 @@ public final class HttpTransport implements Transport {
     private static final Logger LOG = Logger.getLogger(HttpTransport.class.getName());
     private final CloseableHttpClient client;
     private final Map<String, String> defaultHeaders;
+    private final long connectTimeoutMillis;
+    private final long defaultResponseTimeoutMillis;
+    private volatile int networkTimeoutMillis;
 
     public HttpTransport(EsJdbcUrl config) throws GeneralSecurityException {
         var managerBuilder = PoolingHttpClientConnectionManagerBuilder.create();
@@ -42,15 +46,23 @@ public final class HttpTransport implements Transport {
                     .setHostnameVerifier(NoopHostnameVerifier.INSTANCE)
                     .build());
         }
+        connectTimeoutMillis = config.connectTimeout().toMillis();
+        defaultResponseTimeoutMillis = config.responseTimeout().toMillis();
+        networkTimeoutMillis = 0;
         RequestConfig requestConfig = RequestConfig.custom()
-                .setConnectTimeout(Timeout.ofMilliseconds(config.connectTimeout().toMillis()))
-                .setResponseTimeout(Timeout.ofMilliseconds(config.responseTimeout().toMillis()))
+                .setConnectTimeout(Timeout.ofMilliseconds(connectTimeoutMillis))
+                .setResponseTimeout(Timeout.ofMilliseconds(defaultResponseTimeoutMillis))
                 .build();
         client = HttpClients.custom()
                 .setConnectionManager(managerBuilder.build())
                 .setDefaultRequestConfig(requestConfig)
                 .build();
         defaultHeaders = authenticationHeaders(config);
+    }
+
+    @Override
+    public void setNetworkTimeoutMillis(int milliseconds) {
+        networkTimeoutMillis = Math.max(0, milliseconds);
     }
 
     private static Map<String, String> authenticationHeaders(EsJdbcUrl config) {
@@ -90,9 +102,26 @@ public final class HttpTransport implements Transport {
 
     @Override
     public Response execute(Request request) throws IOException {
+        return execute(request, null);
+    }
+
+    @Override
+    public Response execute(Request request, ExecuteOptions options) throws IOException {
         long started = System.nanoTime();
+        long responseTimeout = resolveResponseTimeout(options);
+        HttpClientContext context = HttpClientContext.create();
+        RequestConfig requestConfig = RequestConfig.custom()
+                .setConnectTimeout(Timeout.ofMilliseconds(connectTimeoutMillis))
+                .setResponseTimeout(Timeout.ofMilliseconds(responseTimeout))
+                .build();
+        context.setRequestConfig(requestConfig);
+        Transport.Cancellation cancellation = options == null ? null : options.cancellation();
+        if (cancellation instanceof Transport.RequestCancellation) {
+            ((Transport.RequestCancellation) cancellation).bindExecution(Thread.currentThread());
+        }
         var builder = org.apache.hc.core5.http.io.support.ClassicRequestBuilder
-                .create(request.method()).setUri(request.uri());
+                .create(request.method())
+                .setUri(request.uri());
         defaultHeaders.forEach(builder::addHeader);
         request.headers().forEach(builder::setHeader);
         if (request.body() != null) {
@@ -103,7 +132,7 @@ public final class HttpTransport implements Transport {
                     .orElse(ContentType.APPLICATION_JSON.getMimeType());
             builder.setEntity(new StringEntity(request.body(), ContentType.parse(contentType)));
         }
-        Response result = client.execute(builder.build(), response -> {
+        Response result = client.execute(builder.build(), context, response -> {
             Map<String, List<String>> headers = new LinkedHashMap<>();
             for (Header header : response.getHeaders()) {
                 headers.computeIfAbsent(header.getName(), ignored -> new ArrayList<>()).add(header.getValue());
@@ -117,6 +146,16 @@ public final class HttpTransport implements Transport {
                     + " -> HTTP " + result.status() + " in " + durationMillis + " ms");
         }
         return result;
+    }
+
+    private long resolveResponseTimeout(ExecuteOptions options) {
+        if (options != null && options.timeoutMillis() > 0) {
+            return options.timeoutMillis();
+        }
+        if (networkTimeoutMillis > 0) {
+            return networkTimeoutMillis;
+        }
+        return defaultResponseTimeoutMillis;
     }
 
     @Override

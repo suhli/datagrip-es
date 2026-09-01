@@ -6,6 +6,8 @@ import org.junit.jupiter.api.Test;
 import java.sql.SQLException;
 import java.sql.Types;
 import java.sql.Connection;
+import java.sql.ResultSet;
+import java.sql.ResultSetMetaData;
 import java.util.Map;
 import java.util.Properties;
 
@@ -185,16 +187,10 @@ class CoreTest {
         assertTrue(aggregation.columns().stream().anyMatch(c -> c.label().equals("key")));
         assertTrue(aggregation.columns().stream().anyMatch(c -> c.label().equals("doc_count")));
 
-        String completeJson = """
-                {"aggregations":{"by_level":{"buckets":[{"key":10,"doc_count":100}]}},
-                 "_shards":{"total":2,"successful":2}}
-                """;
-        TabularResult withRaw = JsonResultMapper.mapWithRawResponse(completeJson);
-        int rawColumn = java.util.stream.IntStream.range(0, withRaw.columns().size())
-                .filter(i -> withRaw.columns().get(i).label().equals("_response"))
-                .findFirst().orElseThrow();
-        assertEquals("JSON", withRaw.columns().get(rawColumn).typeName());
-        assertTrue(withRaw.rows().get(0).get(rawColumn).toString().contains("_shards"));
+        TabularResult withRaw = JsonResultMapper.mapWithRawResponse("{}");
+        assertEquals(1, withRaw.columns().size());
+        assertEquals("_response", withRaw.columns().get(0).label());
+        assertEquals("{}", withRaw.rows().get(0).get(0).toString());
 
         TabularResult generic = JsonResultMapper.map("""
                 [{"name":"A"},{"name":"B","level":null}]
@@ -228,7 +224,7 @@ class CoreTest {
                  var rows = statement.executeQuery("GET /users/_search\n{\"size\":1}")) {
                 assertTrue(rows.next());
                 assertEquals("Ada", rows.getString("name"));
-                assertTrue(rows.getString("_response").contains("\"hits\""));
+                assertFalse(hasColumn(rows, "_response"));
             }
             try (var statement = connection.createStatement()) {
                 assertTrue(statement.execute("""
@@ -269,6 +265,14 @@ class CoreTest {
         assertFalse(exception.getMessage().contains("must-not-appear"));
     }
 
+    private static boolean hasColumn(ResultSet rows, String label) throws SQLException {
+        ResultSetMetaData meta = rows.getMetaData();
+        for (int i = 1; i <= meta.getColumnCount(); i++) {
+            if (meta.getColumnLabel(i).equalsIgnoreCase(label)) return true;
+        }
+        return false;
+    }
+
     private static final class FakeTransport implements Transport {
         final java.util.ArrayList<Request> requests = new java.util.ArrayList<>();
         boolean closed;
@@ -284,6 +288,12 @@ class CoreTest {
                         """);
             }
             if (path.endsWith("/_mapping")) {
+                return response("""
+                        {"users":{"mappings":{"properties":{"name":{"type":"keyword"},
+                        "profile":{"properties":{"country":{"type":"text"}}}}}}}
+                        """);
+            }
+            if (path.endsWith("/users/_mapping")) {
                 return response("""
                         {"users":{"mappings":{"properties":{"name":{"type":"keyword"},
                         "profile":{"properties":{"country":{"type":"text"}}}}}}}

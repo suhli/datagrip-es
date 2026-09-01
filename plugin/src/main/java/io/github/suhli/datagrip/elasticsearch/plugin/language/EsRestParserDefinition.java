@@ -70,13 +70,24 @@ public final class EsRestParserDefinition implements ParserDefinition {
         }
         if (builder.getTokenType() == EsRestTypes.LBRACE
                 || builder.getTokenType() == EsRestTypes.LBRACKET) {
-            parseToken(builder);
+            parseBodyUntilNextRequest(builder);
         } else if (builder.getTokenType() != EsRestTypes.METHOD && !builder.eof()) {
-            while (!builder.eof() && builder.getTokenType() != EsRestTypes.METHOD) {
-                parseToken(builder);
-            }
+            parseBodyUntilNextRequest(builder);
         }
         request.done(EsRestTypes.REQUEST);
+    }
+
+    private static void parseBodyUntilNextRequest(PsiBuilder builder) {
+        while (!builder.eof() && builder.getTokenType() != EsRestTypes.METHOD) {
+            IElementType token = builder.getTokenType();
+            if (token == EsRestTypes.LBRACE || token == EsRestTypes.LBRACKET) {
+                parseToken(builder);
+            } else if (token == EsRestTypes.COMMENT || token == TokenType.WHITE_SPACE) {
+                builder.advanceLexer();
+            } else {
+                builder.advanceLexer();
+            }
+        }
     }
 
     private static void parseToken(PsiBuilder builder) {
@@ -124,6 +135,8 @@ public final class EsRestParserDefinition implements ParserDefinition {
 
     @Override
     public @NotNull PsiFile createFile(@NotNull FileViewProvider viewProvider) {
+        // SqlFileImpl is the standard integration point for SQL-dialect file types in
+        // Database Tools. It lives under *.impl but is required for statement execution.
         return new SqlFileImpl(viewProvider, EsRestLanguage.INSTANCE);
     }
 

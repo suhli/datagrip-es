@@ -53,4 +53,17 @@ public record EsVersion(String product, String number, String distribution,
         try { return Integer.parseInt(number.split("\\.")[0]); }
         catch (RuntimeException e) { return 0; }
     }
+
+    public int minor() {
+        try { return Integer.parseInt(number.split("\\.")[1]); }
+        catch (RuntimeException e) { return 0; }
+    }
+
+    /** Elasticsearch 7.10+ supports case_insensitive on wildcard queries. */
+    public boolean supportsCaseInsensitiveWildcard() {
+        if ("OpenSearch".equals(product)) return true;
+        if (major() > 7) return true;
+        if (major() == 7) return minor() >= 10;
+        return false;
+    }
 }

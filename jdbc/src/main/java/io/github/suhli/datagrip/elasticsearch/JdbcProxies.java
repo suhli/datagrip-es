@@ -1,11 +1,19 @@
 package io.github.suhli.datagrip.elasticsearch;
 
+import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
+import org.apache.hc.client5.http.ConnectTimeoutException;
+import org.apache.hc.client5.http.HttpHostConnectException;
+import org.apache.hc.core5.http.ConnectionRequestTimeoutException;
 
 import java.io.IOException;
+import java.io.InterruptedIOException;
 import java.lang.reflect.InvocationHandler;
 import java.lang.reflect.Method;
 import java.lang.reflect.Proxy;
+import java.math.BigDecimal;
+import java.math.BigInteger;
+import java.net.SocketTimeoutException;
 import java.net.URI;
 import java.sql.*;
 import java.time.Instant;
@@ -13,6 +21,7 @@ import java.time.LocalDate;
 import java.time.LocalDateTime;
 import java.time.OffsetDateTime;
 import java.util.*;
+import java.util.concurrent.Executor;
 
 final class JdbcProxies {
     private static final ObjectMapper JSON = new ObjectMapper();
@@ -21,7 +30,7 @@ final class JdbcProxies {
 
     static Connection open(EsJdbcUrl config) throws SQLException {
         try {
-            Transport transport = new HttpTransport(config);
+            HttpTransport transport = new HttpTransport(config);
             try {
                 return open(config, transport, EsVersion.detect(transport, config));
             } catch (Exception e) {
@@ -46,6 +55,7 @@ final class JdbcProxies {
     private static final class State {
         final EsJdbcUrl config;
         final Transport transport;
+        final MetadataCache metadataCache = new MetadataCache();
         final Set<Statement> statements = Collections.newSetFromMap(new IdentityHashMap<>());
         Connection connection;
         EsVersion version;
@@ -55,12 +65,11 @@ final class JdbcProxies {
         String catalog;
         String schema;
         int networkTimeout;
-        Map<String, com.fasterxml.jackson.databind.JsonNode> mappings;
-        List<IndexInfo> indices;
 
         State(EsJdbcUrl config, Transport transport) {
             this.config = config;
             this.transport = transport;
+            this.networkTimeout = (int) Math.min(config.responseTimeout().toMillis(), Integer.MAX_VALUE);
         }
 
         synchronized void close() throws SQLException {
@@ -88,7 +97,7 @@ final class JdbcProxies {
             if (objectMethod(proxy, method, args) != NO_RESULT) return objectMethod(proxy, method, args);
             if (name.equals("close")) { state.close(); return null; }
             if (name.equals("isClosed")) return state.closed;
-            if (name.equals("isValid")) return !state.closed;
+            if (name.equals("isValid")) return isValid(state, args == null ? 0 : (int) args[0]);
             requireOpen(state);
             return switch (name) {
                 case "createStatement" -> statement(state, null);
@@ -113,8 +122,12 @@ final class JdbcProxies {
                 case "getTypeMap" -> Map.of();
                 case "setTypeMap" -> { if (!((Map<?, ?>) args[0]).isEmpty()) throw unsupported(name); yield null; }
                 case "getHoldability" -> ResultSet.CLOSE_CURSORS_AT_COMMIT;
-                case "setHoldability" -> { yield null; }
-                case "setNetworkTimeout" -> { state.networkTimeout = (int) args[1]; yield null; }
+                case "setHoldability" -> null;
+                case "setNetworkTimeout" -> {
+                    state.networkTimeout = (int) args[1];
+                    state.transport.setNetworkTimeoutMillis(state.networkTimeout);
+                    yield null;
+                }
                 case "getNetworkTimeout" -> state.networkTimeout;
                 case "abort" -> { state.close(); yield null; }
                 case "unwrap" -> unwrap(proxy, (Class<?>) args[0]);
@@ -124,6 +137,22 @@ final class JdbcProxies {
                         "prepareCall" -> throw unsupported(name);
                 default -> throw unsupported(name);
             };
+        }
+    }
+
+    private static boolean isValid(State state, int timeout) {
+        if (state.closed || timeout < 0) return false;
+        try {
+            Transport.ExecuteOptions options = Transport.ExecuteOptions.of(
+                    timeout == 0 ? (int) state.config.responseTimeout().toMillis() : timeout);
+            Transport.Response response = state.transport.execute(new Transport.Request(
+                    "GET", state.config.endpoint().resolve("/"), Map.of(), null), options);
+            return response.successful();
+        } catch (InterruptedIOException e) {
+            Thread.currentThread().interrupt();
+            return false;
+        } catch (Exception e) {
+            return false;
         }
     }
 
@@ -142,6 +171,7 @@ final class JdbcProxies {
         final Map<Integer, String> parameters = new HashMap<>();
         Statement self;
         ResultSet current;
+        String lastRawBody;
         final List<ResultSet> results = new ArrayList<>();
         int currentIndex = -1;
         boolean closed;
@@ -149,6 +179,7 @@ final class JdbcProxies {
         int maxRows;
         int queryTimeout;
         int fetchSize;
+        volatile Transport.Cancellation runningCancellation;
 
         StatementHandler(State state, String template) {
             this.state = state;
@@ -181,7 +212,7 @@ final class JdbcProxies {
                 case "clearParameters" -> { parameters.clear(); yield null; }
                 case "getConnection" -> state.connection;
                 case "clearWarnings", "clearBatch" -> null;
-                case "cancel" -> throw unsupported(name);
+                case "cancel" -> { cancelRunning(); yield null; }
                 case "getWarnings" -> null;
                 case "setMaxRows" -> { maxRows = (int) args[0]; yield null; }
                 case "getMaxRows" -> maxRows;
@@ -211,6 +242,11 @@ final class JdbcProxies {
             };
         }
 
+        private void cancelRunning() {
+            Transport.Cancellation cancellation = runningCancellation;
+            if (cancellation != null) cancellation.cancel();
+        }
+
         private String sql(Object[] args) throws SQLException {
             if (template == null) return (String) args[0];
             if (args != null && args.length > 0 && args[0] instanceof String) throw unsupported("SQL argument");
@@ -220,7 +256,7 @@ final class JdbcProxies {
         private ResultSet execute(String text) throws SQLException {
             closeResults();
             RestRequestParser.ParsedRequest translated =
-                    SqlSelectTranslator.translate(text, maxRows, fetchSize);
+                    SqlSelectTranslator.translate(text, maxRows, fetchSize, state.version);
             List<RestRequestParser.ParsedRequest> requests = translated == null
                     ? RestRequestParser.parseAll(text)
                     : List.of(translated);
@@ -239,29 +275,77 @@ final class JdbcProxies {
 
         private ResultSet executeRequest(RestRequestParser.ParsedRequest request) throws SQLException {
             URI uri = requestUri(state.config.endpoint(), request.path());
+            Transport.RequestCancellation cancellation = new Transport.RequestCancellation();
+            runningCancellation = cancellation;
+            int timeoutMillis = resolveTimeoutMillis();
             try {
                 Map<String, String> headers = new LinkedHashMap<>();
                 headers.put("Accept", "application/json");
                 if (RestRequestParser.isNdjsonPath(request.path())) {
                     headers.put("Content-Type", "application/x-ndjson");
                 }
-                Transport.Response response = state.transport.execute(new Transport.Request(
-                        request.method(), uri, headers, request.body()));
+                Transport.Response response = state.transport.execute(
+                        new Transport.Request(request.method(), uri, headers, request.body()),
+                        new Transport.ExecuteOptions(timeoutMillis, cancellation));
+                if (cancellation.isCancelled()) {
+                    throw new SQLTimeoutException(request.method() + " " + request.path()
+                            + " cancelled");
+                }
                 if (!response.successful()) {
                     throw EsSqlException.from(response, request.method(), request.path());
                 }
-                TabularResult result = response.body() == null || response.body().isBlank()
-                        ? new TabularResult(
-                                List.of(new TabularResult.Column("_status", Types.INTEGER, "INTEGER")),
-                                List.of(List.of(response.status())))
-                        : JsonResultMapper.mapWithRawResponse(response.body());
+                TabularResult result;
+                if (response.body() == null || response.body().isBlank()) {
+                    result = new TabularResult(
+                            List.of(new TabularResult.Column("_status", Types.INTEGER, "INTEGER")),
+                            List.of(List.of(response.status())));
+                } else {
+                    JsonResultMapper.MappedResponse mapped = JsonResultMapper.mapResponse(response.body());
+                    result = mapped.tabular().structured()
+                            ? new TabularResult(mapped.tabular().columns(), mapped.tabular().rows(),
+                            mapped.rawBody(), true)
+                            : mapped.tabular();
+                    lastRawBody = mapped.rawBody();
+                }
                 if (maxRows > 0 && result.rows().size() > maxRows) {
-                    result = new TabularResult(result.columns(), result.rows().subList(0, maxRows));
+                    result = new TabularResult(result.columns(), result.rows().subList(0, maxRows),
+                            result.rawBody(), result.structured());
                 }
                 return resultSet(result, this);
+            } catch (SQLTimeoutException e) {
+                throw e;
             } catch (IOException e) {
+                if (cancellation.isCancelled()) {
+                    throw new SQLTimeoutException(request.method() + " " + request.path() + " cancelled");
+                }
+                SQLTimeoutException timeout = asTimeout(e, request, timeoutMillis);
+                if (timeout != null) throw timeout;
                 throw new SQLException("Elasticsearch request failed", "08S01", e);
+            } finally {
+                if (runningCancellation == cancellation) runningCancellation = null;
             }
+        }
+
+        private int resolveTimeoutMillis() {
+            if (queryTimeout > 0) return queryTimeout * 1000;
+            if (state.networkTimeout > 0) return state.networkTimeout;
+            return 0;
+        }
+
+        private static SQLTimeoutException asTimeout(
+                IOException error, RestRequestParser.ParsedRequest request, int timeoutMillis) {
+            if (error instanceof InterruptedIOException interrupted) {
+                if (Thread.currentThread().isInterrupted() || interrupted instanceof SocketTimeoutException) {
+                    return new SQLTimeoutException(request.method() + " " + request.path()
+                            + " timed out after " + timeoutMillis + " ms");
+                }
+            }
+            if (error instanceof ConnectTimeoutException || error instanceof ConnectionRequestTimeoutException
+                    || error instanceof HttpHostConnectException) {
+                return new SQLTimeoutException(request.method() + " " + request.path()
+                        + " timed out after " + timeoutMillis + " ms");
+            }
+            return null;
         }
 
         private boolean advanceResult(int behavior) throws SQLException {
@@ -307,6 +391,7 @@ final class JdbcProxies {
 
         void close() throws SQLException {
             if (closed) return;
+            cancelRunning();
             closed = true;
             closeResults();
             state.statements.remove(self);
@@ -383,6 +468,13 @@ final class JdbcProxies {
             Object objectResult = objectMethod(proxy, method, args);
             if (objectResult != NO_RESULT) return objectResult;
             requireOpen(state);
+            if (name.equals("supportsResultSetType")) {
+                return (int) args[0] == ResultSet.TYPE_FORWARD_ONLY;
+            }
+            if (name.equals("supportsResultSetConcurrency")) {
+                return (int) args[0] == ResultSet.TYPE_FORWARD_ONLY
+                        && (int) args[1] == ResultSet.CONCUR_READ_ONLY;
+            }
             return switch (name) {
                 case "getConnection" -> state.connection;
                 case "getURL" -> state.config.jdbcUrl();
@@ -409,12 +501,11 @@ final class JdbcProxies {
                         "storesLowerCaseQuotedIdentifiers", "storesUpperCaseIdentifiers",
                         "storesUpperCaseQuotedIdentifiers", "supportsTransactions",
                         "supportsStoredProcedures", "supportsBatchUpdates", "supportsSavepoints",
-                        "supportsMultipleTransactions",
-                        "supportsResultSetConcurrency" -> false;
+                        "supportsMultipleTransactions" -> false;
                 case "storesMixedCaseQuotedIdentifiers", "supportsMixedCaseIdentifiers",
                         "supportsMixedCaseQuotedIdentifiers", "allTablesAreSelectable",
-                        "isReadOnly", "nullsAreSortedLow", "supportsResultSetType",
-                        "supportsMultipleResultSets", "supportsMultipleOpenResults" -> true;
+                        "isReadOnly", "nullsAreSortedLow", "supportsMultipleResultSets",
+                        "supportsMultipleOpenResults" -> true;
                 case "nullsAreSortedHigh", "nullsAreSortedAtStart", "nullsAreSortedAtEnd",
                         "usesLocalFiles", "usesLocalFilePerTable", "supportsAlterTableWithAddColumn",
                         "supportsAlterTableWithDropColumn" -> false;
@@ -424,10 +515,10 @@ final class JdbcProxies {
                 case "getMaxConnections", "getMaxStatements", "getMaxColumnsInTable",
                         "getMaxColumnNameLength", "getMaxTableNameLength", "getMaxSchemaNameLength",
                         "getMaxCatalogNameLength", "getMaxRowSize", "getMaxStatementLength" -> 0;
-                case "getSchemas" -> rows(List.of("TABLE_SCHEM", "TABLE_CATALOG"), List.of());
-                case "getCatalogs" -> rows(List.of("TABLE_CAT"),
+                case "getSchemas" -> metadataRows(MetadataSchemas.SCHEMAS, List.of());
+                case "getCatalogs" -> metadataRows(MetadataSchemas.CATALOGS,
                         List.of(List.of(state.version.clusterName())));
-                case "getTableTypes" -> rows(List.of("TABLE_TYPE"), List.of(List.of("TABLE")));
+                case "getTableTypes" -> metadataRows(MetadataSchemas.TABLE_TYPES, List.of(List.of("TABLE")));
                 case "getTables" -> tableMetadata((String) args[0], (String) args[2],
                         args[3] == null ? null : (String[]) args[3]);
                 case "getColumns" -> columnMetadata((String) args[0], (String) args[2], (String) args[3]);
@@ -444,13 +535,13 @@ final class JdbcProxies {
 
         private ResultSet tableMetadata(String catalog, String pattern, String[] types) throws SQLException {
             if (catalog != null && !catalog.equals(state.version.clusterName())) {
-                return rows(tableColumns(), List.of());
+                return metadataRows(MetadataSchemas.TABLES, List.of());
             }
             if (types != null && Arrays.stream(types).noneMatch("TABLE"::equalsIgnoreCase)) {
-                return rows(tableColumns(), List.of());
+                return metadataRows(MetadataSchemas.TABLES, List.of());
             }
             List<List<Object>> result = new ArrayList<>();
-            for (IndexInfo index : indices()) {
+            for (MetadataCache.IndexInfo index : indices()) {
                 if (like(index.name(), pattern)) {
                     String remarks = "health=" + index.health() + ", status=" + index.status()
                             + ", docs=" + index.docsCount() + ", store=" + index.storeSize();
@@ -458,16 +549,16 @@ final class JdbcProxies {
                             null, null, null, null, null));
                 }
             }
-            return rows(tableColumns(), result);
+            return metadataRows(MetadataSchemas.TABLES, result);
         }
 
         private ResultSet columnMetadata(String catalog, String tablePattern, String columnPattern)
                 throws SQLException {
             if (catalog != null && !catalog.equals(state.version.clusterName())) {
-                return rows(columnColumns(), List.of());
+                return metadataRows(MetadataSchemas.COLUMNS, List.of());
             }
             List<List<Object>> result = new ArrayList<>();
-            for (var index : mappings().entrySet()) {
+            for (var index : mappingsForTable(tablePattern).entrySet()) {
                 if (!like(index.getKey(), tablePattern)) continue;
                 int ordinal = 1;
                 for (MappingFlattener.Field field : MappingFlattener.flatten(index.getValue())) {
@@ -481,27 +572,61 @@ final class JdbcProxies {
                     ordinal++;
                 }
             }
-            return rows(columnColumns(), result);
+            return metadataRows(MetadataSchemas.COLUMNS, result);
         }
 
-        private Map<String, com.fasterxml.jackson.databind.JsonNode> mappings() throws SQLException {
-            if (state.mappings != null) return state.mappings;
+        private Map<String, JsonNode> mappingsForTable(String tablePattern) throws SQLException {
+            if (tablePattern == null || tablePattern.equals("%")) {
+                return loadMappingsForIndices(indices().stream()
+                        .map(MetadataCache.IndexInfo::name)
+                        .filter(name -> like(name, tablePattern))
+                        .toList());
+            }
+            if (containsJdbcWildcard(tablePattern)) {
+                String esPattern = jdbcPatternToEsWildcard(tablePattern);
+                return fetchMappingsByPath("/" + esPattern + "/_mapping");
+            }
+            JsonNode cached = state.metadataCache.mappingIfFresh(tablePattern);
+            if (cached != null) return Map.of(tablePattern, cached);
+            return fetchMappingsByPath("/" + tablePattern + "/_mapping");
+        }
+
+        private Map<String, JsonNode> loadMappingsForIndices(List<String> indexNames) throws SQLException {
+            Map<String, JsonNode> result = new LinkedHashMap<>();
+            List<String> missing = new ArrayList<>();
+            for (String index : indexNames) {
+                JsonNode cached = state.metadataCache.mappingIfFresh(index);
+                if (cached != null) result.put(index, cached);
+                else missing.add(index);
+            }
+            if (!missing.isEmpty()) {
+                result.putAll(fetchMappingsByPath("/" + String.join(",", missing) + "/_mapping"));
+            }
+            return result;
+        }
+
+        private Map<String, JsonNode> fetchMappingsByPath(String path) throws SQLException {
             try {
                 Transport.Response response = state.transport.execute(new Transport.Request(
-                        "GET", requestUri(state.config.endpoint(), "/_mapping"), Map.of(), null));
-                if (!response.successful()) throw new SQLException("Mapping request returned HTTP " + response.status());
-                var root = JSON.readTree(response.body());
-                Map<String, com.fasterxml.jackson.databind.JsonNode> result = new LinkedHashMap<>();
-                root.properties().forEach(entry -> result.put(entry.getKey(), entry.getValue()));
-                state.mappings = Map.copyOf(result);
-                return state.mappings;
+                        "GET", requestUri(state.config.endpoint(), path), Map.of(), null));
+                if (!response.successful()) {
+                    throw new SQLException("Mapping request returned HTTP " + response.status());
+                }
+                JsonNode root = JSON.readTree(response.body());
+                Map<String, JsonNode> result = new LinkedHashMap<>();
+                root.properties().forEach(entry -> {
+                    result.put(entry.getKey(), entry.getValue());
+                    state.metadataCache.putMapping(entry.getKey(), entry.getValue());
+                });
+                return result;
             } catch (IOException e) {
                 throw new SQLException("Cannot load Elasticsearch mappings", "08S01", e);
             }
         }
 
-        private List<IndexInfo> indices() throws SQLException {
-            if (state.indices != null) return state.indices;
+        private List<MetadataCache.IndexInfo> indices() throws SQLException {
+            List<MetadataCache.IndexInfo> cached = state.metadataCache.indicesIfFresh();
+            if (cached != null) return cached;
             try {
                 Transport.Response response = state.transport.execute(new Transport.Request(
                         "GET", requestUri(state.config.endpoint(),
@@ -510,16 +635,16 @@ final class JdbcProxies {
                 if (!response.successful()) {
                     throw EsSqlException.from(response, "GET", "/_cat/indices");
                 }
-                List<IndexInfo> result = new ArrayList<>();
+                List<MetadataCache.IndexInfo> result = new ArrayList<>();
                 for (var item : JSON.readTree(response.body())) {
-                    result.add(new IndexInfo(item.path("index").asText(),
+                    result.add(new MetadataCache.IndexInfo(item.path("index").asText(),
                             item.path("health").asText(""),
                             item.path("status").asText(""),
                             item.path("docs.count").asText(""),
                             item.path("store.size").asText("")));
                 }
-                state.indices = List.copyOf(result);
-                return state.indices;
+                state.metadataCache.putIndices(result);
+                return result;
             } catch (IOException e) {
                 throw new SQLException("Cannot list Elasticsearch indices", "08S01", e);
             }
@@ -533,9 +658,10 @@ final class JdbcProxies {
         return proxy;
     }
 
-    private static ResultSet rows(List<String> labels, List<List<Object>> values) {
-        List<TabularResult.Column> columns = labels.stream()
-                .map(label -> new TabularResult.Column(label, Types.VARCHAR, "VARCHAR")).toList();
+    private static ResultSet metadataRows(List<MetadataSchemas.Column> schema, List<List<Object>> values) {
+        List<TabularResult.Column> columns = schema.stream()
+                .map(column -> new TabularResult.Column(column.name(), column.jdbcType(), column.typeName()))
+                .toList();
         return resultSet(new TabularResult(columns, values), null);
     }
 
@@ -583,13 +709,13 @@ final class JdbcProxies {
                 case "getLong" -> number(value(args[0])).longValue();
                 case "getFloat" -> number(value(args[0])).floatValue();
                 case "getDouble" -> number(value(args[0])).doubleValue();
-                case "getBigDecimal" -> new java.math.BigDecimal(asString(value(args[0])));
+                case "getBigDecimal" -> asBigDecimal(value(args[0]));
                 case "getBytes" -> {
-                    String value = asString(value(args[0]));
-                    yield value == null ? null : value.getBytes(java.nio.charset.StandardCharsets.UTF_8);
+                    String text = asString(value(args[0]));
+                    yield text == null ? null : text.getBytes(java.nio.charset.StandardCharsets.UTF_8);
                 }
-                case "getDate" -> java.sql.Date.valueOf(asString(value(args[0])));
-                case "getTime" -> Time.valueOf(asString(value(args[0])));
+                case "getDate" -> asDate(value(args[0]));
+                case "getTime" -> asTime(value(args[0]));
                 case "getTimestamp" -> timestamp(value(args[0]));
                 case "getMetaData" -> resultSetMetadata(result);
                 case "getStatement" -> owner == null ? null : owner.self;
@@ -663,6 +789,7 @@ final class JdbcProxies {
             case Types.BIGINT -> Long.class.getName();
             case Types.FLOAT -> Float.class.getName();
             case Types.DOUBLE -> Double.class.getName();
+            case Types.DECIMAL -> BigDecimal.class.getName();
             case Types.TIMESTAMP -> Timestamp.class.getName();
             default -> String.class.getName();
         };
@@ -671,8 +798,34 @@ final class JdbcProxies {
     private static Number number(Object value) throws SQLException {
         if (value == null) return 0;
         if (value instanceof Number number) return number;
-        try { return new java.math.BigDecimal(value.toString()); }
+        try { return new BigDecimal(value.toString()); }
         catch (NumberFormatException e) { throw new SQLException("Value is not numeric: " + value, "22018", e); }
+    }
+
+    private static BigDecimal asBigDecimal(Object value) throws SQLException {
+        if (value == null) return null;
+        if (value instanceof BigDecimal decimal) return decimal;
+        if (value instanceof BigInteger integer) return new BigDecimal(integer);
+        if (value instanceof Number number) return BigDecimal.valueOf(number.doubleValue());
+        try { return new BigDecimal(value.toString()); }
+        catch (NumberFormatException e) { throw new SQLException("Value is not numeric: " + value, "22018", e); }
+    }
+
+    private static java.sql.Date asDate(Object value) throws SQLException {
+        if (value == null) return null;
+        if (value instanceof java.sql.Date date) return date;
+        if (value instanceof Timestamp timestamp) return new java.sql.Date(timestamp.getTime());
+        String text = value.toString();
+        try { return java.sql.Date.valueOf(LocalDate.parse(text)); }
+        catch (RuntimeException e) { throw new SQLException("Value is not a date: " + text, "22007", e); }
+    }
+
+    private static Time asTime(Object value) throws SQLException {
+        if (value == null) return null;
+        if (value instanceof Time time) return time;
+        if (value instanceof Timestamp timestamp) return new Time(timestamp.getTime());
+        try { return Time.valueOf(value.toString()); }
+        catch (RuntimeException e) { throw new SQLException("Value is not a time: " + value, "22007", e); }
     }
 
     private static String asString(Object value) { return value == null ? null : value.toString(); }
@@ -685,6 +838,7 @@ final class JdbcProxies {
 
     private static Timestamp timestamp(Object value) throws SQLException {
         if (value == null) return null;
+        if (value instanceof Timestamp ts) return ts;
         if (value instanceof Number number) return new Timestamp(number.longValue());
         String text = value.toString();
         try { return Timestamp.from(Instant.parse(text)); } catch (RuntimeException ignored) {}
@@ -700,6 +854,7 @@ final class JdbcProxies {
         if (type == Integer.class || type == int.class) return number(value).intValue();
         if (type == Long.class || type == long.class) return number(value).longValue();
         if (type == Double.class || type == double.class) return number(value).doubleValue();
+        if (type == BigDecimal.class) return asBigDecimal(value);
         if (type == Boolean.class || type == boolean.class) return asBoolean(value);
         if (type == Timestamp.class) return timestamp(value);
         throw new SQLException("Cannot convert value to " + type.getName(), "22005");
@@ -713,36 +868,37 @@ final class JdbcProxies {
                     DatabaseMetaData.typeNullable, true, DatabaseMetaData.typeSearchable,
                     false, false, false, null, 0, 0, null, null, 10));
         }
-        return rows(typeInfoColumns(), rows);
+        return metadataRows(MetadataSchemas.TYPE_INFO, rows);
     }
 
     private static ResultSet emptyStandard(String name) {
-        return rows(switch (name) {
-            case "getPrimaryKeys" -> List.of("TABLE_CAT", "TABLE_SCHEM", "TABLE_NAME", "COLUMN_NAME", "KEY_SEQ", "PK_NAME");
-            case "getImportedKeys", "getExportedKeys", "getCrossReference" -> List.of("PKTABLE_CAT", "PKTABLE_SCHEM", "PKTABLE_NAME", "PKCOLUMN_NAME", "FKTABLE_CAT", "FKTABLE_SCHEM", "FKTABLE_NAME", "FKCOLUMN_NAME", "KEY_SEQ", "UPDATE_RULE", "DELETE_RULE", "FK_NAME", "PK_NAME", "DEFERRABILITY");
-            case "getIndexInfo" -> List.of("TABLE_CAT", "TABLE_SCHEM", "TABLE_NAME", "NON_UNIQUE", "INDEX_QUALIFIER", "INDEX_NAME", "TYPE", "ORDINAL_POSITION", "COLUMN_NAME", "ASC_OR_DESC", "CARDINALITY", "PAGES", "FILTER_CONDITION");
-            default -> List.of("RESULT");
+        return metadataRows(switch (name) {
+            case "getPrimaryKeys" -> List.of(
+                    col("TABLE_CAT", Types.VARCHAR), col("TABLE_SCHEM", Types.VARCHAR),
+                    col("TABLE_NAME", Types.VARCHAR), col("COLUMN_NAME", Types.VARCHAR),
+                    col("KEY_SEQ", Types.INTEGER), col("PK_NAME", Types.VARCHAR));
+            case "getImportedKeys", "getExportedKeys", "getCrossReference" -> List.of(
+                    col("PKTABLE_CAT", Types.VARCHAR), col("PKTABLE_SCHEM", Types.VARCHAR),
+                    col("PKTABLE_NAME", Types.VARCHAR), col("PKCOLUMN_NAME", Types.VARCHAR),
+                    col("FKTABLE_CAT", Types.VARCHAR), col("FKTABLE_SCHEM", Types.VARCHAR),
+                    col("FKTABLE_NAME", Types.VARCHAR), col("FKCOLUMN_NAME", Types.VARCHAR),
+                    col("KEY_SEQ", Types.INTEGER), col("UPDATE_RULE", Types.INTEGER),
+                    col("DELETE_RULE", Types.INTEGER), col("FK_NAME", Types.VARCHAR),
+                    col("PK_NAME", Types.VARCHAR), col("DEFERRABILITY", Types.INTEGER));
+            case "getIndexInfo" -> List.of(
+                    col("TABLE_CAT", Types.VARCHAR), col("TABLE_SCHEM", Types.VARCHAR),
+                    col("TABLE_NAME", Types.VARCHAR), col("NON_UNIQUE", Types.BOOLEAN),
+                    col("INDEX_QUALIFIER", Types.VARCHAR), col("INDEX_NAME", Types.VARCHAR),
+                    col("TYPE", Types.INTEGER), col("ORDINAL_POSITION", Types.INTEGER),
+                    col("COLUMN_NAME", Types.VARCHAR), col("ASC_OR_DESC", Types.VARCHAR),
+                    col("CARDINALITY", Types.INTEGER), col("PAGES", Types.INTEGER),
+                    col("FILTER_CONDITION", Types.VARCHAR));
+            default -> List.of(col("RESULT", Types.VARCHAR));
         }, List.of());
     }
 
-    private static List<String> tableColumns() {
-        return List.of("TABLE_CAT", "TABLE_SCHEM", "TABLE_NAME", "TABLE_TYPE", "REMARKS",
-                "TYPE_CAT", "TYPE_SCHEM", "TYPE_NAME", "SELF_REFERENCING_COL_NAME", "REF_GENERATION");
-    }
-
-    private static List<String> columnColumns() {
-        return List.of("TABLE_CAT", "TABLE_SCHEM", "TABLE_NAME", "COLUMN_NAME", "DATA_TYPE",
-                "TYPE_NAME", "COLUMN_SIZE", "BUFFER_LENGTH", "DECIMAL_DIGITS", "NUM_PREC_RADIX",
-                "NULLABLE", "REMARKS", "COLUMN_DEF", "SQL_DATA_TYPE", "SQL_DATETIME_SUB",
-                "CHAR_OCTET_LENGTH", "ORDINAL_POSITION", "IS_NULLABLE", "SCOPE_CATALOG",
-                "SCOPE_SCHEMA", "SCOPE_TABLE", "SOURCE_DATA_TYPE", "IS_AUTOINCREMENT", "IS_GENERATEDCOLUMN");
-    }
-
-    private static List<String> typeInfoColumns() {
-        return List.of("TYPE_NAME", "DATA_TYPE", "PRECISION", "LITERAL_PREFIX", "LITERAL_SUFFIX",
-                "CREATE_PARAMS", "NULLABLE", "CASE_SENSITIVE", "SEARCHABLE", "UNSIGNED_ATTRIBUTE",
-                "FIXED_PREC_SCALE", "AUTO_INCREMENT", "LOCAL_TYPE_NAME", "MINIMUM_SCALE",
-                "MAXIMUM_SCALE", "SQL_DATA_TYPE", "SQL_DATETIME_SUB", "NUM_PREC_RADIX");
+    private static MetadataSchemas.Column col(String name, int type) {
+        return new MetadataSchemas.Column(name, type, EsTypes.jdbcTypeName(type));
     }
 
     private static boolean like(String value, String pattern) {
@@ -757,13 +913,27 @@ final class JdbcProxies {
         return value.matches(regex.toString());
     }
 
+    private static boolean containsJdbcWildcard(String pattern) {
+        return pattern.indexOf('%') >= 0 || pattern.indexOf('_') >= 0;
+    }
+
+    static String jdbcPatternToEsWildcard(String pattern) {
+        if (pattern == null || pattern.equals("%")) return "*";
+        StringBuilder result = new StringBuilder();
+        for (int i = 0; i < pattern.length(); i++) {
+            char c = pattern.charAt(i);
+            if (c == '%') result.append('*');
+            else if (c == '_') result.append('?');
+            else if (c == '*' || c == '?' || c == '\\') result.append('\\').append(c);
+            else result.append(c);
+        }
+        return result.toString();
+    }
+
     private static int versionPart(String version, int index) {
         try { return Integer.parseInt(version.split("\\.")[index]); }
         catch (RuntimeException e) { return 0; }
     }
-
-    private record IndexInfo(String name, String health, String status,
-                             String docsCount, String storeSize) {}
 
     private static void requireOpen(State state) throws SQLException {
         if (state.closed) throw new SQLException("Connection is closed", "08003");

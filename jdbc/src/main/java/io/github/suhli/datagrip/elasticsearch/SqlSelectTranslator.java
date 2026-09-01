@@ -45,6 +45,11 @@ final class SqlSelectTranslator {
 
     static RestRequestParser.ParsedRequest translate(String text, int maxRows, int fetchSize)
             throws SQLException {
+        return translate(text, maxRows, fetchSize, null);
+    }
+
+    static RestRequestParser.ParsedRequest translate(
+            String text, int maxRows, int fetchSize, EsVersion version) throws SQLException {
         if (SELECT_ONE.matcher(text).matches()) {
             return new RestRequestParser.ParsedRequest("GET", "/", null);
         }
@@ -102,7 +107,7 @@ final class SqlSelectTranslator {
             if (kql.isEmpty()) {
                 throw new SQLException("Expected KQL expression after WHERE", "42000");
             }
-            query = KqlParser.parse(kql);
+            query = KqlParser.parse(kql, version);
         }
 
         Map<String, Object> body = new LinkedHashMap<>();
