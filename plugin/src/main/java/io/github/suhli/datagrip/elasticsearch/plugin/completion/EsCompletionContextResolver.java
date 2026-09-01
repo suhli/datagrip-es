@@ -25,6 +25,8 @@ import java.util.regex.Pattern;
 public final class EsCompletionContextResolver {
     private static final Pattern REQUEST_LINE = Pattern.compile(
             "^(GET|POST|PUT|DELETE|PATCH|HEAD)\\s+(\\S*)", Pattern.CASE_INSENSITIVE);
+    private static final Set<String> HTTP_METHODS = Set.of(
+            "GET", "POST", "PUT", "DELETE", "PATCH", "HEAD");
     private static final Set<String> QUERY_CONTEXTS = Set.of(
             "query", "bool.must", "bool.filter", "bool.should", "bool.must_not",
             "constant_score.filter", "nested.query", "function_score.query");
@@ -112,11 +114,14 @@ public final class EsCompletionContextResolver {
             String requestText,
             int caretInRequest,
             String method) {
-        if (method.isEmpty() && caretInRequest <= firstNonWhitespace(requestText)) {
-            return builder.location(EsCaretLocation.METHOD)
-                    .expectedKind(EsExpectedKind.UNKNOWN)
-                    .prefix(requestText.substring(0, Math.min(caretInRequest, requestText.length())).trim())
-                    .build();
+        if (method.isEmpty()) {
+            String methodPrefix = methodPrefixAtCaret(requestText, caretInRequest);
+            if (!methodPrefix.isEmpty() || caretInRequest <= firstNonWhitespace(requestText)) {
+                return builder.location(EsCaretLocation.METHOD)
+                        .expectedKind(EsExpectedKind.HTTP_METHOD)
+                        .prefix(methodPrefix)
+                        .build();
+            }
         }
 
         if (pathInfo.inQueryString()) {
@@ -317,6 +322,31 @@ public final class EsCompletionContextResolver {
             if (!Character.isWhitespace(c) && c != '#' && c != '/') return i;
         }
         return -1;
+    }
+
+    private static String methodPrefixAtCaret(String requestText, int caretInRequest) {
+        int lineEnd = lineEnd(requestText, 0);
+        int limit = Math.min(caretInRequest, lineEnd);
+        StringBuilder prefix = new StringBuilder();
+        for (int i = 0; i < limit; i++) {
+            char c = requestText.charAt(i);
+            if (Character.isWhitespace(c)) {
+                if (!prefix.isEmpty()) break;
+                continue;
+            }
+            if (Character.isLetter(c)) {
+                prefix.append(c);
+                continue;
+            }
+            break;
+        }
+        String value = prefix.toString();
+        if (value.isEmpty()) return "";
+        String upper = value.toUpperCase(Locale.ROOT);
+        for (String candidate : HTTP_METHODS) {
+            if (candidate.startsWith(upper)) return value;
+        }
+        return "";
     }
 
     private static int methodPrefixLength(String requestText, String method) {

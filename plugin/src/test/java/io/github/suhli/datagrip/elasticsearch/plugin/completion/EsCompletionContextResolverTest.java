@@ -56,6 +56,21 @@ class EsCompletionContextResolverTest {
     private final EsCompletionSchema schema = sampleSchema();
 
     @Test
+    void resolvesHttpMethodPrefix() {
+        String text = "G";
+        var ctx = new EsCompletionContextResolver(schema).resolve(text, text.length(), "", "");
+        assertEquals(EsExpectedKind.HTTP_METHOD, ctx.expectedKind());
+        assertEquals("G", ctx.prefix());
+    }
+
+    @Test
+    void resolvesIndexPrefix() {
+        String text = "GET /game";
+        var ctx = new EsCompletionContextResolver(schema).resolve(text, text.length(), "", "");
+        assertEquals(EsExpectedKind.INDEX, ctx.expectedKind());
+    }
+
+    @Test
     void resolvesClusterEndpointPrefix() {
         String text = "GET /_cl";
         var ctx = new EsCompletionContextResolver(schema).resolve(text, text.length(), "", "");

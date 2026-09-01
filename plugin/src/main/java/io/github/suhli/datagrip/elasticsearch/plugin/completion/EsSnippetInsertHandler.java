@@ -67,13 +67,14 @@ public final class EsSnippetInsertHandler implements InsertHandler<LookupElement
     private String buildPlainInsertion(Document document, int start) {
         if (!asJsonKey) {
             if (alreadyQuoted) return insertion;
-            return quoteIfNeeded(insertion);
+            return insertion;
         }
         if (alreadyQuoted) return insertion;
         return "\"" + escape(insertion) + "\"";
     }
 
-    private static String quoteIfNeeded(String value) {
+    static String formatJsonStringValue(String value, boolean alreadyQuoted) {
+        if (alreadyQuoted) return value;
         if (value.startsWith("\"") || value.equals("true") || value.equals("false")
                 || value.equals("null") || looksNumeric(value)) {
             return value;

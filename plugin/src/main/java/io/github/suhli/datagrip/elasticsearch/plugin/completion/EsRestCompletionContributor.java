@@ -16,6 +16,8 @@ import com.intellij.codeInsight.completion.CompletionProvider;
 import com.intellij.codeInsight.completion.CompletionResultSet;
 import com.intellij.codeInsight.completion.CompletionType;
 import com.intellij.codeInsight.lookup.LookupElement;
+import com.intellij.codeInsight.completion.CompletionParameters;
+import com.intellij.database.psi.DbDataSource;
 import com.intellij.openapi.project.Project;
 import com.intellij.patterns.PlatformPatterns;
 import com.intellij.psi.PsiFile;
@@ -49,12 +51,13 @@ public final class EsRestCompletionContributor extends CompletionContributor {
         Project project = file.getProject();
         EsCompletionSchema schema = EsCompletionSchemaLoader.get();
         String datasourceId = EsCompletionDataSourceUtil.resolveDatasourceId(parameters);
+        DbDataSource dataSource = EsCompletionDataSourceUtil.findDataSource(parameters);
         String version = EsCompletionDataSourceUtil.resolveVersion(parameters);
         EsCompletionContextResolver resolver = new EsCompletionContextResolver(schema);
         EsCompletionContext ctx = resolver.resolve(
                 file, parameters.getOffset(), datasourceId, version);
         EsCompletionMetadataSnapshot snapshot = EsCompletionMetadataService.getInstance(project)
-                .snapshotForIndices(datasourceId, ctx.indices());
+                .snapshotForIndices(datasourceId, dataSource, ctx.indices());
         CompletionResultSet filtered = result.withPrefixMatcher(ctx.prefix() == null ? "" : ctx.prefix());
         produceCompletions(ctx, schema, snapshot, filtered::addElement);
     }
@@ -76,6 +79,7 @@ public final class EsRestCompletionContributor extends CompletionContributor {
             EsCompletionMetadataSnapshot snapshot,
             Consumer<LookupElement> sink) {
         switch (ctx.expectedKind()) {
+            case HTTP_METHOD -> addHttpMethods(sink, ctx);
             case ENDPOINT, PATH_SEGMENT -> addEndpoints(sink, schema, ctx);
             case INDEX -> addIndices(sink, snapshot, ctx);
             case QUERY_PARAMETER -> addQueryParams(sink, schema, ctx);
@@ -89,11 +93,21 @@ public final class EsRestCompletionContributor extends CompletionContributor {
             }
             case FIELD_KEY, FIELD_VALUE -> addFields(sink, snapshot, ctx);
             default -> {
-                if (ctx.location() == EsCaretLocation.URL) {
+                if (ctx.location() == EsCaretLocation.METHOD) {
+                    addHttpMethods(sink, ctx);
+                } else if (ctx.location() == EsCaretLocation.URL) {
                     addIndices(sink, snapshot, ctx);
                     addEndpoints(sink, schema, ctx);
                 }
             }
+        }
+    }
+
+    private static void addHttpMethods(Consumer<LookupElement> sink, EsCompletionContext ctx) {
+        String prefix = ctx.prefix() == null ? "" : ctx.prefix().toUpperCase(Locale.ROOT);
+        for (String method : List.of("GET", "POST", "PUT", "DELETE", "PATCH", "HEAD")) {
+            if (!prefix.isEmpty() && !method.startsWith(prefix)) continue;
+            sink.accept(EsLookupFactory.httpMethod(method));
         }
     }
 
@@ -160,7 +174,7 @@ public final class EsRestCompletionContributor extends CompletionContributor {
                 else {
                     sink.accept(EsLookupFactory.dslKey(new EsSchemaModels.DslNode(
                             key, "search_body", List.of("search"), List.of(), "object", false,
-                            List.of(), "\"" + key + "\": $END$", "Search body",
+                            List.of(), null, "Search body",
                             null, null, false, 100), ctx));
                 }
             }
@@ -176,15 +190,11 @@ public final class EsRestCompletionContributor extends CompletionContributor {
             for (String child : parentNode.children()) {
                 EsSchemaModels.DslNode node = schema.findProperty(parent, child);
                 if (node != null) {
-                    sink.accept(EsLookupFactory.dslKey(new EsSchemaModels.DslNode(
-                            child, node.category(), node.parents(), node.children(),
-                            node.valueType(), node.fieldReference(), node.enumValues(),
-                            "\"" + child + "\": $END$", node.description(), node.minVersion(),
-                            node.deprecatedVersion(), node.deprecated(), node.priority()), ctx));
+                    sink.accept(EsLookupFactory.dslKey(node, ctx));
                 } else {
                     sink.accept(EsLookupFactory.dslKey(new EsSchemaModels.DslNode(
                             child, "property", List.of(parent), List.of(), "object", false, List.of(),
-                            "\"" + child + "\": $END$", parent + " property", null, null, false, 90), ctx));
+                            null, parent + " property", null, null, false, 90), ctx));
                 }
             }
             if ("aggs".equals(parent) || "aggregations".equals(parent)) {

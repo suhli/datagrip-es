@@ -2,6 +2,7 @@ package io.github.suhli.datagrip.elasticsearch.plugin.completion.model;
 
 /** What completion expects at the caret. */
 public enum EsExpectedKind {
+    HTTP_METHOD,
     ENDPOINT,
     PATH_SEGMENT,
     INDEX,

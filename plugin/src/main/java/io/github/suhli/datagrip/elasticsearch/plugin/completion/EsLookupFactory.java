@@ -1,7 +1,9 @@
 package io.github.suhli.datagrip.elasticsearch.plugin.completion;
 
 import io.github.suhli.datagrip.elasticsearch.plugin.completion.metadata.EsCompletionMetadataSnapshot;
+import io.github.suhli.datagrip.elasticsearch.plugin.completion.model.EsCaretLocation;
 import io.github.suhli.datagrip.elasticsearch.plugin.completion.model.EsCompletionContext;
+import io.github.suhli.datagrip.elasticsearch.plugin.completion.model.EsExpectedKind;
 import io.github.suhli.datagrip.elasticsearch.plugin.completion.schema.EsSchemaModels;
 
 import com.intellij.codeInsight.lookup.LookupElement;
@@ -9,7 +11,18 @@ import com.intellij.codeInsight.lookup.LookupElementBuilder;
 import com.intellij.codeInsight.completion.PrioritizedLookupElement;
 
 public final class EsLookupFactory {
+    private static final String[] HTTP_METHODS = {"GET", "POST", "PUT", "DELETE", "PATCH", "HEAD"};
+
     private EsLookupFactory() {}
+
+    public static LookupElement httpMethod(String method) {
+        return PrioritizedLookupElement.withPriority(
+                LookupElementBuilder.create(method)
+                        .withPresentableText(method)
+                        .withTypeText("HTTP method", true)
+                        .withInsertHandler(new EsSnippetInsertHandler(method + " ", false, false)),
+                120);
+    }
 
     public static LookupElement endpoint(EsSchemaModels.Endpoint endpoint, EsCompletionContext context) {
         String primary = EsCompletionSchemaPaths.primaryPath(endpoint);
@@ -47,21 +60,22 @@ public final class EsLookupFactory {
         return PrioritizedLookupElement.withPriority(
                 LookupElementBuilder.create(value)
                         .withTypeText(typeText, true)
-                        .withInsertHandler(new EsSnippetInsertHandler(value, alreadyQuoted, false)),
+                        .withInsertHandler(new EsSnippetInsertHandler(
+                                EsSnippetInsertHandler.formatJsonStringValue(value, alreadyQuoted),
+                                false, false)),
                 100);
     }
 
     public static LookupElement dslKey(EsSchemaModels.DslNode node, EsCompletionContext context) {
-        String snippet = node.snippet();
+        String snippet = resolveSnippet(node, context);
         LookupElementBuilder builder = LookupElementBuilder.create(node.key())
                 .withPresentableText(node.key())
                 .withTypeText(node.description() == null || node.description().isBlank()
                         ? node.category() : node.description(), true)
                 .withStrikeoutness(node.deprecated());
-        if (snippet != null && !snippet.isBlank() && context.location() ==
-                io.github.suhli.datagrip.elasticsearch.plugin.completion.model.EsCaretLocation.BODY) {
+        if (snippet != null && !snippet.isBlank()) {
             builder = builder.withInsertHandler(new EsSnippetInsertHandler(
-                    node.key(), context.insideString(), true, adjustSnippet(snippet, context)));
+                    node.key(), context.insideString(), true, snippet));
         } else {
             builder = builder.withInsertHandler(new EsSnippetInsertHandler(
                     node.key(), context.insideString(), true));
@@ -74,25 +88,36 @@ public final class EsLookupFactory {
     public static LookupElement field(EsCompletionMetadataSnapshot.FieldInfo field, EsCompletionContext context) {
         String type = field.primaryType();
         String typeText = type + (field.multiField() ? " · multi-field" : "");
+        boolean asKey = context.expectedKind() == EsExpectedKind.FIELD_KEY;
+        String insertion = asKey
+                ? field.path()
+                : EsSnippetInsertHandler.formatJsonStringValue(field.path(), context.insideString());
         return PrioritizedLookupElement.withPriority(
                 LookupElementBuilder.create(field.path())
                         .withTypeText(typeText, true)
-                        .withInsertHandler(new EsSnippetInsertHandler(
-                                field.path(), context.insideString(),
-                                context.expectedKind() ==
-                                        io.github.suhli.datagrip.elasticsearch.plugin.completion.model.EsExpectedKind.FIELD_KEY)),
+                        .withInsertHandler(new EsSnippetInsertHandler(insertion, context.insideString(), asKey)),
                 120);
+    }
+
+    private static String resolveSnippet(EsSchemaModels.DslNode node, EsCompletionContext context) {
+        if (node.snippet() != null && !node.snippet().isBlank()) {
+            return adjustSnippet(node.snippet(), context);
+        }
+        if (context.location() == EsCaretLocation.BODY
+                && (context.expectedKind() == EsExpectedKind.BODY_KEY
+                || context.expectedKind() == EsExpectedKind.QUERY_DSL
+                || context.expectedKind() == EsExpectedKind.AGGREGATION_TYPE)) {
+            String generated = EsSnippetDefaults.bodyKeySnippet(node.key(), node.valueType());
+            return context.insideString()
+                    ? EsSnippetDefaults.adjustForInsideString(generated)
+                    : generated;
+        }
+        return null;
     }
 
     private static String adjustSnippet(String snippet, EsCompletionContext context) {
         if (context.insideString()) {
-            // When caret is inside quotes, drop the leading quoted key quotes.
-            if (snippet.startsWith("\"")) {
-                int second = snippet.indexOf('"', 1);
-                if (second > 1 && second + 1 < snippet.length() && snippet.charAt(second + 1) == ':') {
-                    return snippet.substring(1, second) + snippet.substring(second + 1);
-                }
-            }
+            return EsSnippetDefaults.adjustForInsideString(snippet);
         }
         return snippet;
     }

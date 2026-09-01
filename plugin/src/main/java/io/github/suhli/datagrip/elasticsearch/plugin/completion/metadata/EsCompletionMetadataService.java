@@ -1,5 +1,6 @@
 package io.github.suhli.datagrip.elasticsearch.plugin.completion.metadata;
 
+import com.intellij.database.psi.DbDataSource;
 import com.intellij.openapi.application.ApplicationManager;
 import com.intellij.openapi.components.Service;
 import com.intellij.openapi.diagnostic.Logger;
@@ -47,6 +48,10 @@ public final class EsCompletionMetadataService {
         providers.put(provider.datasourceId(), provider);
     }
 
+    public boolean hasProvider(@Nullable String datasourceId) {
+        return datasourceId != null && !datasourceId.isBlank() && providers.containsKey(datasourceId);
+    }
+
     public void unregisterProvider(String datasourceId) {
         if (datasourceId == null) return;
         providers.remove(datasourceId);
@@ -70,17 +75,40 @@ public final class EsCompletionMetadataService {
 
     public EsCompletionMetadataSnapshot snapshotForIndices(
             @Nullable String datasourceId, List<String> indexPatterns) {
+        return snapshotForIndices(datasourceId, null, indexPatterns);
+    }
+
+    public EsCompletionMetadataSnapshot snapshotForIndices(
+            @Nullable String datasourceId,
+            @Nullable DbDataSource dataSource,
+            List<String> indexPatterns) {
+        if (dataSource != null) {
+            EsCompletionMetadataRegistrar.ensureRegistered(project, dataSource);
+        }
         EsCompletionMetadataSnapshot current = snapshot(datasourceId);
-        List<String> concrete = resolveIndices(current, indexPatterns);
+        if (current.indices().isEmpty() && dataSource != null) {
+            List<EsCompletionMetadataSnapshot.IndexObject> modelIndices = EsDbModelIndices.list(dataSource);
+            if (!modelIndices.isEmpty()) {
+                putSnapshot(new EsCompletionMetadataSnapshot(
+                        datasourceId == null ? "" : datasourceId,
+                        current.esVersion(),
+                        modelIndices,
+                        current.fields(),
+                        System.currentTimeMillis()));
+                current = snapshot(datasourceId);
+            }
+        }
+        final EsCompletionMetadataSnapshot snapshot = current;
+        List<String> concrete = resolveIndices(snapshot, indexPatterns);
         boolean missingFields = concrete.stream().anyMatch(index ->
-                current.fields().values().stream().noneMatch(f -> f.indexCoverage().contains(index)));
+                snapshot.fields().values().stream().noneMatch(f -> f.indexCoverage().contains(index)));
         if (missingFields && !concrete.isEmpty()) {
             scheduleRefresh(datasourceId, concrete);
         }
-        if (concrete.isEmpty()) return current;
+        if (concrete.isEmpty()) return snapshot;
 
         Map<String, EsCompletionMetadataSnapshot.FieldInfo> filtered = new LinkedHashMap<>();
-        for (EsCompletionMetadataSnapshot.FieldInfo field : current.fields().values()) {
+        for (EsCompletionMetadataSnapshot.FieldInfo field : snapshot.fields().values()) {
             boolean matches = false;
             for (String index : concrete) {
                 if (field.indexCoverage().contains(index)) {
@@ -91,17 +119,17 @@ public final class EsCompletionMetadataService {
             if (matches) filtered.put(field.path(), field);
         }
         return new EsCompletionMetadataSnapshot(
-                current.datasourceId(),
-                current.esVersion(),
-                current.indices(),
+                snapshot.datasourceId(),
+                snapshot.esVersion(),
+                snapshot.indices(),
                 filtered,
-                current.loadedAtMillis());
+                snapshot.loadedAtMillis());
     }
 
-    public void putSnapshot(EsCompletionMetadataSnapshot snapshot) {
-        if (snapshot == null || snapshot.datasourceId().isBlank()) return;
-        snapshots.computeIfAbsent(snapshot.datasourceId(), id -> new AtomicReference<>())
-                .set(snapshot);
+    public void putSnapshot(EsCompletionMetadataSnapshot stored) {
+        if (stored == null || stored.datasourceId().isBlank()) return;
+        snapshots.computeIfAbsent(stored.datasourceId(), id -> new AtomicReference<>())
+                .set(stored);
     }
 
     private void scheduleRefresh(@Nullable String datasourceId, List<String> indexNames) {
