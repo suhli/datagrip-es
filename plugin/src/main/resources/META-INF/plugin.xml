@@ -48,6 +48,8 @@
             implementationClass="io.github.suhli.datagrip.elasticsearch.plugin.language.EsRestFormattingModelBuilder"/>
         <preFormatProcessor
             implementation="io.github.suhli.datagrip.elasticsearch.plugin.language.EsRestPreFormatProcessor"/>
+        <copyPastePreProcessor
+            implementation="io.github.suhli.datagrip.elasticsearch.plugin.language.EsRestCopyPastePreProcessor"/>
         <sql.dialect
             dbms="ELASTICSEARCH"
             implementationClass="io.github.suhli.datagrip.elasticsearch.plugin.language.EsRestLanguage"/>

@@ -3,11 +3,10 @@ package io.github.suhli.datagrip.elasticsearch.plugin.completion;
 import com.intellij.codeInsight.completion.InsertHandler;
 import com.intellij.codeInsight.completion.InsertionContext;
 import com.intellij.codeInsight.lookup.LookupElement;
-import com.intellij.codeInsight.template.Template;
-import com.intellij.codeInsight.template.TemplateManager;
 import com.intellij.openapi.editor.Document;
 import com.intellij.openapi.editor.Editor;
 import com.intellij.openapi.util.TextRange;
+import io.github.suhli.datagrip.elasticsearch.plugin.language.EsRestDocumentFormatter;
 import org.jetbrains.annotations.Nullable;
 
 /**
@@ -100,16 +99,45 @@ public final class EsSnippetInsertHandler implements InsertHandler<LookupElement
         if (asJsonKey && alreadyQuoted) {
             rendered = stripOuterQuotesForTemplate(rendered);
         }
-        TemplateManager manager = TemplateManager.getInstance(context.getProject());
-        Template template = manager.createTemplate("es-rest-snippet", "esrest", rendered);
-        template.setToReformat(true);
-        if (rendered.contains("$FIELD$")) {
-            template.addVariable("FIELD", "", "", true);
+        EsSnippetRenderer.RenderResult result = EsSnippetRenderer.render(rendered);
+        Editor editor = context.getEditor();
+        Document document = editor.getDocument();
+        document.insertString(start, result.text());
+        placeCursorAfterSnippet(editor, document, start, result);
+    }
+
+    private static void placeCursorAfterSnippet(
+            Editor editor,
+            Document document,
+            int insertStart,
+            EsSnippetRenderer.RenderResult rendered) {
+        int fallbackCursor = rendered.cursorOffset() >= 0
+                ? insertStart + rendered.cursorOffset()
+                : insertStart + rendered.text().length();
+        String before = document.getText();
+        String formatted = EsRestDocumentFormatter.format(before);
+        if (!formatted.equals(before)) {
+            document.replaceString(0, document.getTextLength(), formatted);
+            int fieldCursor = EsSnippetRenderer.findEmptyFieldKeyCursor(formatted, insertStart);
+            editor.getCaretModel().moveToOffset(
+                    fieldCursor >= 0 ? fieldCursor : mapCursorOffset(before, formatted, fallbackCursor));
+            return;
         }
-        if (rendered.contains("$VALUE$")) {
-            template.addVariable("VALUE", "", "", true);
+        editor.getCaretModel().moveToOffset(fallbackCursor);
+    }
+
+    private static int mapCursorOffset(String before, String after, int cursorInBefore) {
+        String prefix = safePrefix(before, cursorInBefore);
+        int idx = after.indexOf(prefix);
+        if (idx >= 0) {
+            return idx + prefix.length();
         }
-        manager.startTemplate(context.getEditor(), template);
+        return Math.min(cursorInBefore, after.length());
+    }
+
+    private static String safePrefix(String text, int cursor) {
+        int len = Math.min(cursor, text.length());
+        return text.substring(Math.max(0, len - 32), len);
     }
 
     static int findEmptyFieldKeyPairStart(CharSequence text, int offset) {
