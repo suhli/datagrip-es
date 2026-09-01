@@ -18,17 +18,50 @@ public final class EsSnippetInsertHandler implements InsertHandler<LookupElement
     private final boolean alreadyQuoted;
     private final boolean asJsonKey;
     private final @Nullable String templateText;
+    private final int cursorOffsetFromEnd;
+    private final boolean replaceEmptyFieldKeyPair;
 
     public EsSnippetInsertHandler(String insertion, boolean alreadyQuoted, boolean asJsonKey) {
-        this(insertion, alreadyQuoted, asJsonKey, null);
+        this(insertion, alreadyQuoted, asJsonKey, null, 0, false);
     }
 
     public EsSnippetInsertHandler(
             String insertion, boolean alreadyQuoted, boolean asJsonKey, @Nullable String templateText) {
+        this(insertion, alreadyQuoted, asJsonKey, templateText, 0, false);
+    }
+
+    private EsSnippetInsertHandler(
+            String insertion,
+            boolean alreadyQuoted,
+            boolean asJsonKey,
+            @Nullable String templateText,
+            int cursorOffsetFromEnd,
+            boolean replaceEmptyFieldKeyPair) {
         this.insertion = insertion;
         this.alreadyQuoted = alreadyQuoted;
         this.asJsonKey = asJsonKey;
         this.templateText = templateText;
+        this.cursorOffsetFromEnd = cursorOffsetFromEnd;
+        this.replaceEmptyFieldKeyPair = replaceEmptyFieldKeyPair;
+    }
+
+    /** Inserts a mapping field as a JSON object key inside an open string (e.g. term's {@code ""}). */
+    static EsSnippetInsertHandler forFieldKeyInsideString(String fieldPath) {
+        return new EsSnippetInsertHandler(fieldPath, true, false, null, 0, false);
+    }
+
+    /**
+     * Inserts {@code "field": ""} when the caret is after {@code term: \{} and offers mapping keys.
+     * Cursor lands inside the value quotes.
+     */
+    static EsSnippetInsertHandler forFieldKeyPair(String fieldPath) {
+        String text = "\"" + escape(fieldPath) + "\": \"\"";
+        return new EsSnippetInsertHandler(text, false, false, null, 1, false);
+    }
+
+    /** Replaces {@code "": ""} with {@code "field": ""} when completing an empty field-object key placeholder. */
+    static EsSnippetInsertHandler forEmptyFieldKeyPair(String fieldPath) {
+        return new EsSnippetInsertHandler(fieldPath, false, false, null, 1, true);
     }
 
     @Override
@@ -38,7 +71,17 @@ public final class EsSnippetInsertHandler implements InsertHandler<LookupElement
         int start = context.getStartOffset();
         int tail = context.getTailOffset();
 
-        // Remove the prefix that Completion already replaced inconsistently.
+        if (replaceEmptyFieldKeyPair) {
+            int keyStart = findEmptyFieldKeyPairStart(document.getCharsSequence(), tail);
+            if (keyStart >= 0) {
+                document.deleteString(keyStart, tail);
+                String text = "\"" + escape(insertion) + "\": \"\"";
+                document.insertString(keyStart, text);
+                editor.getCaretModel().moveToOffset(keyStart + text.length() - cursorOffsetFromEnd);
+                return;
+            }
+        }
+
         document.deleteString(start, tail);
 
         if (templateText != null && !templateText.isBlank()) {
@@ -48,33 +91,65 @@ public final class EsSnippetInsertHandler implements InsertHandler<LookupElement
 
         String text = buildPlainInsertion(document, start);
         document.insertString(start, text);
-        editor.getCaretModel().moveToOffset(start + text.length());
+        int cursor = start + text.length() - cursorOffsetFromEnd;
+        editor.getCaretModel().moveToOffset(Math.max(start, cursor));
     }
 
     private void insertTemplate(InsertionContext context, int start) {
         String rendered = templateText;
         if (asJsonKey && alreadyQuoted) {
             rendered = stripOuterQuotesForTemplate(rendered);
-        } else if (asJsonKey && !alreadyQuoted) {
-            // keep quotes from template
         }
         TemplateManager manager = TemplateManager.getInstance(context.getProject());
         Template template = manager.createTemplate("es-rest-snippet", "esrest", rendered);
         template.setToReformat(true);
+        if (rendered.contains("$FIELD$")) {
+            template.addVariable("FIELD", "", "", true);
+        }
+        if (rendered.contains("$VALUE$")) {
+            template.addVariable("VALUE", "", "", true);
+        }
         manager.startTemplate(context.getEditor(), template);
+    }
+
+    static int findEmptyFieldKeyPairStart(CharSequence text, int offset) {
+        int i = Math.min(offset, text.length());
+        while (i > 0 && text.charAt(i - 1) != ':' && text.charAt(i - 1) != '"') {
+            i--;
+        }
+        if (i > 0 && text.charAt(i - 1) == '"') {
+            i--;
+        }
+        while (i > 0 && Character.isWhitespace(text.charAt(i - 1))) {
+            i--;
+        }
+        if (i == 0 || text.charAt(i - 1) != ':') {
+            return -1;
+        }
+        i--;
+        while (i > 0 && Character.isWhitespace(text.charAt(i - 1))) {
+            i--;
+        }
+        if (i < 2 || text.charAt(i - 1) != '"' || text.charAt(i - 2) != '"') {
+            return -1;
+        }
+        return i - 2;
     }
 
     private String buildPlainInsertion(Document document, int start) {
         if (!asJsonKey) {
-            if (alreadyQuoted) return insertion;
             return insertion;
         }
-        if (alreadyQuoted) return insertion;
+        if (alreadyQuoted) {
+            return insertion;
+        }
         return "\"" + escape(insertion) + "\"";
     }
 
     static String formatJsonStringValue(String value, boolean alreadyQuoted) {
-        if (alreadyQuoted) return value;
+        if (alreadyQuoted) {
+            return value;
+        }
         if (value.startsWith("\"") || value.equals("true") || value.equals("false")
                 || value.equals("null") || looksNumeric(value)) {
             return value;
@@ -83,7 +158,9 @@ public final class EsSnippetInsertHandler implements InsertHandler<LookupElement
     }
 
     private static boolean looksNumeric(String value) {
-        if (value.isEmpty()) return false;
+        if (value.isEmpty()) {
+            return false;
+        }
         for (int i = 0; i < value.length(); i++) {
             char c = value.charAt(i);
             if (!(Character.isDigit(c) || c == '-' || c == '+' || c == '.' || c == 'e' || c == 'E')) {
@@ -93,13 +170,11 @@ public final class EsSnippetInsertHandler implements InsertHandler<LookupElement
         return true;
     }
 
-    private static String escape(String value) {
+    static String escape(String value) {
         return value.replace("\\", "\\\\").replace("\"", "\\\"");
     }
 
     private static String stripOuterQuotesForTemplate(String template) {
-        // "\"term\": ..." when already inside quotes becomes term\": ... which is wrong.
-        // Templates for keys should use $KEY$ without surrounding quotes when alreadyQuoted.
         if (template.startsWith("\"") && template.contains("\":")) {
             int end = template.indexOf('"', 1);
             if (end > 1) {
@@ -110,8 +185,11 @@ public final class EsSnippetInsertHandler implements InsertHandler<LookupElement
     }
 
     public static boolean isInsideQuotes(Document document, int offset) {
-        if (offset <= 0 || offset > document.getTextLength()) return false;
-        int lineStart = document.getLineStartOffset(document.getLineNumber(Math.min(offset, document.getTextLength() - 1)));
+        if (offset <= 0 || offset > document.getTextLength()) {
+            return false;
+        }
+        int lineStart = document.getLineStartOffset(
+                document.getLineNumber(Math.min(offset, document.getTextLength() - 1)));
         String line = document.getText(new TextRange(lineStart, offset));
         boolean in = false;
         boolean escaped = false;
@@ -125,7 +203,9 @@ public final class EsSnippetInsertHandler implements InsertHandler<LookupElement
                 escaped = true;
                 continue;
             }
-            if (c == '"') in = !in;
+            if (c == '"') {
+                in = !in;
+            }
         }
         return in;
     }

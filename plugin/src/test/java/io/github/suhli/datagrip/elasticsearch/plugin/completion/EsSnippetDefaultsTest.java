@@ -22,6 +22,13 @@ class EsSnippetDefaultsTest {
     }
 
     @Test
+    void fieldObjectIncludesFieldAndValuePlaceholders() {
+        String snippet = EsSnippetDefaults.bodyKeySnippet("term", "field_object");
+        assertTrue(snippet.contains("\"$FIELD$\""));
+        assertTrue(snippet.contains("\"$VALUE$\""));
+    }
+
+    @Test
     void fieldIncludesStringPlaceholder() {
         String snippet = EsSnippetDefaults.bodyKeySnippet("field", "field");
         assertTrue(snippet.contains("\"$FIELD$\""));

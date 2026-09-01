@@ -89,14 +89,23 @@ public final class EsLookupFactory {
         String type = field.primaryType();
         String typeText = type + (field.multiField() ? " · multi-field" : "");
         boolean asKey = context.expectedKind() == EsExpectedKind.FIELD_KEY;
-        String insertion = asKey
-                ? field.path()
-                : EsSnippetInsertHandler.formatJsonStringValue(field.path(), context.insideString());
-        return PrioritizedLookupElement.withPriority(
-                LookupElementBuilder.create(field.path())
-                        .withTypeText(typeText, true)
-                        .withInsertHandler(new EsSnippetInsertHandler(insertion, context.insideString(), asKey)),
-                120);
+        LookupElementBuilder builder = LookupElementBuilder.create(field.path())
+                .withTypeText(typeText, true);
+        if (asKey) {
+            if (EsCompletionContextResolver.isEmptyFieldKeyPlaceholder(context)) {
+                builder = builder.withInsertHandler(EsSnippetInsertHandler.forEmptyFieldKeyPair(field.path()));
+            } else if (context.insideString()) {
+                builder = builder.withInsertHandler(EsSnippetInsertHandler.forFieldKeyInsideString(field.path()));
+            } else {
+                builder = builder.withInsertHandler(EsSnippetInsertHandler.forFieldKeyPair(field.path()));
+            }
+        } else {
+            String insertion = EsSnippetInsertHandler.formatJsonStringValue(
+                    field.path(), context.insideString());
+            builder = builder.withInsertHandler(
+                    new EsSnippetInsertHandler(insertion, context.insideString(), false));
+        }
+        return PrioritizedLookupElement.withPriority(builder, 120);
     }
 
     private static String resolveSnippet(EsSchemaModels.DslNode node, EsCompletionContext context) {

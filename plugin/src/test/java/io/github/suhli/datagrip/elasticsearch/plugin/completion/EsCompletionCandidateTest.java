@@ -13,6 +13,7 @@ import java.util.List;
 import java.util.Map;
 import java.util.Set;
 
+import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
@@ -73,6 +74,21 @@ class EsCompletionCandidateTest {
                 ctx);
         assertFalse(element.getLookupString().contains("\""));
         assertTrue(element.getLookupString().equals("data.ip.keyword"));
+    }
+
+    @Test
+    void fieldKeyPairUsesQuotedKeyAndEmptyValue() {
+        EsCompletionContext ctx = EsCompletionContext.builder()
+                .location(EsCaretLocation.BODY)
+                .expectedKind(EsExpectedKind.FIELD_KEY)
+                .insideString(false)
+                .parentProperty("term")
+                .build();
+        var element = EsLookupFactory.field(
+                new EsCompletionMetadataSnapshot.FieldInfo(
+                        "user.id", Set.of("keyword"), Set.of("game_logs"), false),
+                ctx);
+        assertEquals("user.id", element.getLookupString());
     }
 
     private static EsCompletionSchema schema() {

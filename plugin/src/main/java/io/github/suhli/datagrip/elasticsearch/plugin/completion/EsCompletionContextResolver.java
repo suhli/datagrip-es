@@ -172,6 +172,12 @@ public final class EsCompletionContextResolver {
         if (scan.expectingKey() && isFieldKeyContext(path, parent, stack)) {
             return builder.expectedKind(EsExpectedKind.FIELD_KEY).build();
         }
+        if (isEmptyFieldKeyPlaceholderContext(scan, parent)) {
+            if (scan.prefix().isEmpty()) {
+                return builder.expectedKind(EsExpectedKind.FIELD_KEY).build();
+            }
+            return builder.expectedKind(EsExpectedKind.UNKNOWN).build();
+        }
         if (!scan.expectingKey() && isFieldValueContext(path, parent)) {
             return builder.expectedKind(EsExpectedKind.FIELD_VALUE).build();
         }
@@ -240,6 +246,29 @@ public final class EsCompletionContextResolver {
             return !"exists".equals(parent);
         }
         return false;
+    }
+
+    /**
+     * Detects {@code "": ""} placeholder value position in field-object queries such as
+     * {@code term}. The caret may be inside the value quotes while the key is still empty.
+     */
+    private boolean isEmptyFieldKeyPlaceholderContext(EsJsonPathScanner.ScanResult scan, String parent) {
+        if (!FIELD_QUERY_KEYS.contains(parent) || "exists".equals(parent)) {
+            return false;
+        }
+        if (scan.expectingKey() || !scan.insideString()) {
+            return false;
+        }
+        return scan.currentProperty().isEmpty();
+    }
+
+    /** Whether mapping field completion should replace the empty {@code "": ""} placeholder pair. */
+    static boolean isEmptyFieldKeyPlaceholder(EsCompletionContext context) {
+        return context.expectedKind() == EsExpectedKind.FIELD_KEY
+                && context.insideString()
+                && context.currentProperty().isEmpty()
+                && FIELD_QUERY_KEYS.contains(context.parentProperty())
+                && !"exists".equals(context.parentProperty());
     }
 
     private boolean isFieldValueContext(String path, String parent) {

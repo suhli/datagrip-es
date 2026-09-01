@@ -44,11 +44,32 @@ class EsJsonPathScannerTest {
     }
 
     @Test
-    void handlesEscapedQuotes() {
-        String text = "{ \"a\\\"b\": \"x\", \"";
+    void scansEmptyFieldKeyPairValueTyping() {
+        String text = """
+                {
+                  "query": {
+                    "term": {
+                      "": "x""";
         EsJsonPathScanner.ScanResult result = EsJsonPathScanner.scan(text, 0, text.length());
-        assertTrue(result.unfinishedString());
-        assertTrue(result.expectingKey());
+        assertEquals("term", result.parentProperty());
+        assertTrue(result.insideString());
+        assertEquals("x", result.prefix());
+        assertTrue(result.currentProperty().isEmpty());
+        assertFalse(result.expectingKey());
+    }
+
+    @Test
+    void scansEmptyFieldKeyPairValueStart() {
+        String text = """
+                {
+                  "query": {
+                    "term": {
+                      "": \"""";
+        EsJsonPathScanner.ScanResult result = EsJsonPathScanner.scan(text, 0, text.length());
+        assertEquals("term", result.parentProperty());
+        assertTrue(result.insideString());
+        assertTrue(result.prefix().isEmpty());
+        assertTrue(result.currentProperty().isEmpty());
     }
 }
 
@@ -140,6 +161,31 @@ class EsCompletionContextResolverTest {
                       \"""";
         var ctx = new EsCompletionContextResolver(schema).resolve(text, text.length(), "", "");
         assertEquals(EsExpectedKind.FIELD_KEY, ctx.expectedKind());
+    }
+
+    @Test
+    void resolvesTermEmptyKeyPairFieldKey() {
+        String text = """
+                GET /i/_search
+                {
+                  "query": {
+                    "term": {
+                      "": \"""";
+        var ctx = new EsCompletionContextResolver(schema).resolve(text, text.length(), "", "");
+        assertEquals(EsExpectedKind.FIELD_KEY, ctx.expectedKind());
+        assertTrue(ctx.insideString());
+    }
+
+    @Test
+    void termEmptyValueIsNotFieldKey() {
+        String text = """
+                GET /i/_search
+                {
+                  "query": {
+                    "term": {
+                      "": "x""";
+        var ctx = new EsCompletionContextResolver(schema).resolve(text, text.length(), "", "");
+        assertEquals(EsExpectedKind.UNKNOWN, ctx.expectedKind());
     }
 
     @Test

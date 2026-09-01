@@ -8,7 +8,8 @@ public final class EsSnippetDefaults {
         String escaped = escapeJsonKey(key);
         return switch (valueType == null ? "" : valueType) {
             case "query_array" -> "\"" + escaped + "\": [\n  {\n    $END$\n  }\n]";
-            case "object", "field_object" -> "\"" + escaped + "\": {\n  $END$\n}";
+            case "field_object" -> "\"" + escaped + "\": {\n  \"$FIELD$\": \"$VALUE$\"\n}";
+            case "object" -> "\"" + escaped + "\": {\n  $END$\n}";
             case "field" -> "\"" + escaped + "\": \"$FIELD$\"";
             case "string" -> "\"" + escaped + "\": \"$VALUE$\"";
             case "number" -> "\"" + escaped + "\": $VALUE$";
