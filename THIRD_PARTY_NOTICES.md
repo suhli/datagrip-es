@@ -8,6 +8,12 @@ The standalone JDBC distribution includes:
   Apache License 2.0.
 - SLF4J API, licensed under the MIT License.
 
+The plugin also ships compact Elasticsearch completion metadata generated at
+build time from the Apache-2.0
+[elasticsearch-specification](https://github.com/elastic/elasticsearch-specification)
+`schema.json`. The upstream specification itself is not redistributed; only a
+derived completion subset is packaged.
+
 Test-only dependencies are not distributed with the plugin:
 
 - JUnit 5, Eclipse Public License 2.0.

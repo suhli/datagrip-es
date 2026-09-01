@@ -1,0 +1,256 @@
+package io.github.suhli.datagrip.elasticsearch.plugin.completion;
+
+import io.github.suhli.datagrip.elasticsearch.plugin.completion.metadata.EsCompletionMetadataService;
+import io.github.suhli.datagrip.elasticsearch.plugin.completion.metadata.EsCompletionMetadataSnapshot;
+import io.github.suhli.datagrip.elasticsearch.plugin.completion.model.EsCaretLocation;
+import io.github.suhli.datagrip.elasticsearch.plugin.completion.model.EsCompletionContext;
+import io.github.suhli.datagrip.elasticsearch.plugin.completion.model.EsExpectedKind;
+import io.github.suhli.datagrip.elasticsearch.plugin.completion.schema.EsCompletionSchema;
+import io.github.suhli.datagrip.elasticsearch.plugin.completion.schema.EsCompletionSchemaLoader;
+import io.github.suhli.datagrip.elasticsearch.plugin.completion.schema.EsSchemaModels;
+import io.github.suhli.datagrip.elasticsearch.plugin.language.EsRestLanguage;
+
+import com.intellij.codeInsight.completion.CompletionContributor;
+import com.intellij.codeInsight.completion.CompletionParameters;
+import com.intellij.codeInsight.completion.CompletionProvider;
+import com.intellij.codeInsight.completion.CompletionResultSet;
+import com.intellij.codeInsight.completion.CompletionType;
+import com.intellij.codeInsight.lookup.LookupElement;
+import com.intellij.openapi.project.Project;
+import com.intellij.patterns.PlatformPatterns;
+import com.intellij.psi.PsiFile;
+import com.intellij.util.ProcessingContext;
+import org.jetbrains.annotations.NotNull;
+
+import java.util.ArrayList;
+import java.util.LinkedHashSet;
+import java.util.List;
+import java.util.Locale;
+import java.util.Set;
+import java.util.function.Consumer;
+
+public final class EsRestCompletionContributor extends CompletionContributor {
+    public EsRestCompletionContributor() {
+        extend(CompletionType.BASIC,
+                PlatformPatterns.psiElement().withLanguage(EsRestLanguage.INSTANCE),
+                new CompletionProvider<>() {
+                    @Override
+                    protected void addCompletions(
+                            @NotNull CompletionParameters parameters,
+                            @NotNull ProcessingContext context,
+                            @NotNull CompletionResultSet result) {
+                        fill(parameters, result);
+                    }
+                });
+    }
+
+    static void fill(CompletionParameters parameters, CompletionResultSet result) {
+        PsiFile file = parameters.getOriginalFile();
+        Project project = file.getProject();
+        EsCompletionSchema schema = EsCompletionSchemaLoader.get();
+        String datasourceId = EsCompletionDataSourceUtil.resolveDatasourceId(parameters);
+        String version = EsCompletionDataSourceUtil.resolveVersion(parameters);
+        EsCompletionContextResolver resolver = new EsCompletionContextResolver(schema);
+        EsCompletionContext ctx = resolver.resolve(
+                file, parameters.getOffset(), datasourceId, version);
+        EsCompletionMetadataSnapshot snapshot = EsCompletionMetadataService.getInstance(project)
+                .snapshotForIndices(datasourceId, ctx.indices());
+        CompletionResultSet filtered = result.withPrefixMatcher(ctx.prefix() == null ? "" : ctx.prefix());
+        produceCompletions(ctx, schema, snapshot, filtered::addElement);
+    }
+
+    /** Test hook that exercises the same lookup generation path as {@link #fill}. */
+    static List<String> lookupStringsForTest(PsiFile file, int offset) {
+        EsCompletionSchema schema = EsCompletionSchemaLoader.get();
+        EsCompletionContext ctx = new EsCompletionContextResolver(schema).resolve(file, offset, "", "");
+        EsCompletionMetadataSnapshot snapshot = EsCompletionMetadataService.getInstance(file.getProject())
+                .snapshotForIndices("", ctx.indices());
+        List<String> items = new ArrayList<>();
+        produceCompletions(ctx, schema, snapshot, element -> items.add(element.getLookupString()));
+        return items;
+    }
+
+    private static void produceCompletions(
+            EsCompletionContext ctx,
+            EsCompletionSchema schema,
+            EsCompletionMetadataSnapshot snapshot,
+            Consumer<LookupElement> sink) {
+        switch (ctx.expectedKind()) {
+            case ENDPOINT, PATH_SEGMENT -> addEndpoints(sink, schema, ctx);
+            case INDEX -> addIndices(sink, snapshot, ctx);
+            case QUERY_PARAMETER -> addQueryParams(sink, schema, ctx);
+            case QUERY_PARAMETER_VALUE, ENUM_VALUE -> addEnumValues(sink, schema, ctx);
+            case BOOLEAN_VALUE -> addBooleans(sink, ctx);
+            case BODY_KEY -> addBodyKeys(sink, schema, ctx);
+            case QUERY_DSL -> addQueryDsl(sink, schema, ctx);
+            case AGGREGATION_TYPE -> addAggregations(sink, schema, ctx);
+            case AGGREGATION_NAME, USER_DEFINED_NAME -> {
+                // intentionally no aggregation-type spam
+            }
+            case FIELD_KEY, FIELD_VALUE -> addFields(sink, snapshot, ctx);
+            default -> {
+                if (ctx.location() == EsCaretLocation.URL) {
+                    addIndices(sink, snapshot, ctx);
+                    addEndpoints(sink, schema, ctx);
+                }
+            }
+        }
+    }
+
+    private static void addEndpoints(Consumer<LookupElement> sink, EsCompletionSchema schema, EsCompletionContext ctx) {
+        Set<String> seen = new LinkedHashSet<>();
+        for (EsSchemaModels.Endpoint endpoint : schema.matchEndpoints(ctx.method(), ctx.endpoint(), ctx.prefix())) {
+            String key = EsCompletionSchemaPaths.primaryPath(endpoint);
+            if (!seen.add(key)) continue;
+            sink.accept(EsLookupFactory.endpoint(endpoint, ctx));
+        }
+    }
+
+    private static void addIndices(
+            Consumer<LookupElement> sink, EsCompletionMetadataSnapshot snapshot, EsCompletionContext ctx) {
+        String prefix = ctx.prefix() == null ? "" : ctx.prefix().toLowerCase(Locale.ROOT);
+        for (EsCompletionMetadataSnapshot.IndexObject index : snapshot.indices()) {
+            if (!prefix.isEmpty() && !index.name().toLowerCase(Locale.ROOT).startsWith(prefix)) continue;
+            sink.accept(EsLookupFactory.index(index));
+        }
+    }
+
+    private static void addQueryParams(Consumer<LookupElement> sink, EsCompletionSchema schema, EsCompletionContext ctx) {
+        EsSchemaModels.Endpoint endpoint = resolveSearchEndpoint(schema, ctx);
+        if (endpoint == null) return;
+        for (EsSchemaModels.QueryParam param : endpoint.queryParams()) {
+            sink.accept(EsLookupFactory.queryParam(param, ctx.insideString()));
+        }
+    }
+
+    private static void addEnumValues(Consumer<LookupElement> sink, EsCompletionSchema schema, EsCompletionContext ctx) {
+        List<String> values = new ArrayList<>();
+        if (ctx.expectedKind() == EsExpectedKind.QUERY_PARAMETER_VALUE) {
+            EsSchemaModels.Endpoint endpoint = resolveSearchEndpoint(schema, ctx);
+            if (endpoint != null) {
+                for (EsSchemaModels.QueryParam param : endpoint.queryParams()) {
+                    if (param.name().equals(ctx.queryParameterName())) {
+                        values.addAll(param.enumValues());
+                    }
+                }
+            }
+        } else {
+            String leaf = leaf(ctx.jsonPath());
+            EsSchemaModels.DslNode node = schema.findProperty(ctx.parentProperty(), leaf);
+            if (node != null) values.addAll(node.enumValues());
+            if (values.isEmpty() && "operator".equals(leaf)) {
+                values.addAll(List.of("and", "or"));
+            }
+        }
+        for (String value : values) {
+            sink.accept(EsLookupFactory.enumValue(value, "enum value", ctx.insideString()));
+        }
+    }
+
+    private static void addBooleans(Consumer<LookupElement> sink, EsCompletionContext ctx) {
+        sink.accept(EsLookupFactory.enumValue("true", "boolean", false));
+        sink.accept(EsLookupFactory.enumValue("false", "boolean", false));
+    }
+
+    private static void addBodyKeys(Consumer<LookupElement> sink, EsCompletionSchema schema, EsCompletionContext ctx) {
+        if (ctx.jsonPath().isEmpty()) {
+            for (String key : schema.bodyRootsForEndpoint(endpointKey(ctx))) {
+                EsSchemaModels.DslNode node = schema.findKey(key);
+                if (node != null) sink.accept(EsLookupFactory.dslKey(node, ctx));
+                else {
+                    sink.accept(EsLookupFactory.dslKey(new EsSchemaModels.DslNode(
+                            key, "search_body", List.of("search"), List.of(), "object", false,
+                            List.of(), "\"" + key + "\": $END$", "Search body",
+                            null, null, false, 100), ctx));
+                }
+            }
+            for (String key : List.of("query", "aggs", "aggregations", "size", "from", "sort", "_source")) {
+                EsSchemaModels.DslNode node = schema.findKey(key);
+                if (node != null) sink.accept(EsLookupFactory.dslKey(node, ctx));
+            }
+            return;
+        }
+        String parent = ctx.parentProperty();
+        EsSchemaModels.DslNode parentNode = schema.findKey(parent);
+        if (parentNode != null) {
+            for (String child : parentNode.children()) {
+                EsSchemaModels.DslNode node = schema.findProperty(parent, child);
+                if (node != null) {
+                    sink.accept(EsLookupFactory.dslKey(new EsSchemaModels.DslNode(
+                            child, node.category(), node.parents(), node.children(),
+                            node.valueType(), node.fieldReference(), node.enumValues(),
+                            "\"" + child + "\": $END$", node.description(), node.minVersion(),
+                            node.deprecatedVersion(), node.deprecated(), node.priority()), ctx));
+                } else {
+                    sink.accept(EsLookupFactory.dslKey(new EsSchemaModels.DslNode(
+                            child, "property", List.of(parent), List.of(), "object", false, List.of(),
+                            "\"" + child + "\": $END$", parent + " property", null, null, false, 90), ctx));
+                }
+            }
+            if ("aggs".equals(parent) || "aggregations".equals(parent)) {
+                return;
+            }
+        }
+        for (EsSchemaModels.DslNode node : schema.childrenOf(parent)) {
+            sink.accept(EsLookupFactory.dslKey(node, ctx));
+        }
+    }
+
+    private static void addQueryDsl(Consumer<LookupElement> sink, EsCompletionSchema schema, EsCompletionContext ctx) {
+        for (EsSchemaModels.DslNode node : schema.queryDslKeys()) {
+            sink.accept(EsLookupFactory.dslKey(node, ctx));
+        }
+    }
+
+    private static void addAggregations(Consumer<LookupElement> sink, EsCompletionSchema schema, EsCompletionContext ctx) {
+        for (EsSchemaModels.DslNode node : schema.aggregationTypes()) {
+            sink.accept(EsLookupFactory.dslKey(node, ctx));
+        }
+        EsSchemaModels.DslNode aggs = schema.findKey("aggs");
+        if (aggs != null) sink.accept(EsLookupFactory.dslKey(aggs, ctx));
+        EsSchemaModels.DslNode aggregations = schema.findKey("aggregations");
+        if (aggregations != null) sink.accept(EsLookupFactory.dslKey(aggregations, ctx));
+    }
+
+    private static void addFields(
+            Consumer<LookupElement> sink,
+            EsCompletionMetadataSnapshot snapshot,
+            EsCompletionContext ctx) {
+        String prefix = ctx.prefix() == null ? "" : ctx.prefix().toLowerCase(Locale.ROOT);
+        for (EsCompletionMetadataSnapshot.FieldInfo field : snapshot.fields().values()) {
+            if (!prefix.isEmpty() && !field.path().toLowerCase(Locale.ROOT).startsWith(prefix)
+                    && !field.path().toLowerCase(Locale.ROOT).contains(prefix)) {
+                continue;
+            }
+            sink.accept(EsLookupFactory.field(field, ctx));
+        }
+    }
+
+    private static EsSchemaModels.Endpoint resolveSearchEndpoint(EsCompletionSchema schema, EsCompletionContext ctx) {
+        EsSchemaModels.Endpoint endpoint = schema.findEndpointByPath(ctx.endpoint());
+        if (endpoint == null && ctx.path().contains("_search")) {
+            endpoint = schema.findEndpointByPath("_search");
+            if (endpoint == null) {
+                for (EsSchemaModels.Endpoint candidate : schema.endpoints()) {
+                    if ("search".equals(candidate.name())) {
+                        return candidate;
+                    }
+                }
+            }
+        }
+        return endpoint;
+    }
+
+    private static String endpointKey(EsCompletionContext ctx) {
+        if (ctx.endpoint() != null && !ctx.endpoint().isBlank()) return ctx.endpoint();
+        if (ctx.path().contains("_search")) return "search";
+        return ctx.path();
+    }
+
+    private static String leaf(String path) {
+        if (path == null || path.isEmpty()) return "";
+        int idx = path.lastIndexOf('.');
+        String value = idx >= 0 ? path.substring(idx + 1) : path;
+        return value.endsWith("[]") ? value.substring(0, value.length() - 2) : value;
+    }
+}

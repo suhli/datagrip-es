@@ -9,7 +9,9 @@ drivers, or subscription-only features.
 - `jdbc`: standalone Elasticsearch REST to JDBC facade with no JetBrains API
   dependency.
 - `plugin`: thin DataGrip integration that bundles and registers the JDBC
-  driver.
+  driver, plus context-aware `.esrest` completion.
+- `completion-codegen`: build-time generator that downloads a pinned
+  Elasticsearch API specification and emits compact completion metadata.
 - `integration-test`: optional tests against a local Elasticsearch Basic
   container or an externally supplied test cluster.
 
@@ -76,7 +78,11 @@ GET /my-index/_search
 ```
 
 The data source binds its Elasticsearch REST dialect to DataGrip's Query
-Console, providing method/path/JSON highlighting and formatting. Execute the
+Console, providing method/path/JSON highlighting, formatting, and Ctrl+Space
+completion for endpoints, query parameters, Query DSL / aggregation keys,
+mapping fields, and data-driven snippets. Completion reads only local schema
+resources and an immutable metadata snapshot; mapping refresh happens in the
+background and never blocks the EDT. Execute the
 current request or select several complete request blocks; DataGrip passes them
 to `Statement.execute`, and the normal Result Grid, copy, and export actions
 remain available. Multiple request blocks and `//` or `#` line comments are

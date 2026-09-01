@@ -23,8 +23,48 @@ dependencies {
             providers.gradleProperty("platformVersion"),
         )
         bundledPlugin("com.intellij.database")
+        testFramework(org.jetbrains.intellij.platform.gradle.TestFrameworkType.Platform)
     }
+    compileOnly(project(":jdbc"))
     runtimeOnly(project(path = ":jdbc", configuration = "shadow"))
+    implementation("com.fasterxml.jackson.core:jackson-databind:2.22.2")
+
+    testImplementation(project(":jdbc"))
+    testImplementation("junit:junit:4.13.2")
+    testImplementation(platform("org.junit:junit-bom:5.13.4"))
+    testImplementation("org.junit.jupiter:junit-jupiter")
+    testRuntimeOnly("org.junit.platform:junit-platform-launcher")
+    testRuntimeOnly("org.junit.vintage:junit-vintage-engine")
+}
+
+val completionResources = configurations.create("completionResources")
+dependencies {
+    completionResources(project(path = ":completion-codegen", configuration = "generated"))
+}
+
+val copyCompletionResources by tasks.registering(Copy::class) {
+    from(completionResources)
+    into(layout.buildDirectory.dir("generated/completion-resources/completion"))
+    dependsOn(":completion-codegen:generateCompletionResources")
+}
+
+sourceSets {
+    main {
+        resources {
+            srcDir(layout.buildDirectory.dir("generated/completion-resources"))
+        }
+    }
+}
+
+tasks.named("processResources") {
+    dependsOn(copyCompletionResources)
+}
+
+tasks.test {
+    useJUnitPlatform {
+        includeEngines("junit-jupiter", "junit-vintage")
+    }
+    dependsOn(copyCompletionResources)
 }
 
 java {

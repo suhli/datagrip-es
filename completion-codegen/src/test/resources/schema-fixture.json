@@ -1,0 +1,223 @@
+{
+  "_info": {
+    "title": "fixture",
+    "license": { "name": "Apache 2.0" }
+  },
+  "endpoints": [
+    {
+      "name": "search",
+      "visibility": "public",
+      "docUrl": "https://example.test/_search",
+      "urls": [
+        { "path": "/_search", "methods": ["GET", "POST"] },
+        { "path": "/{index}/_search", "methods": ["GET", "POST"] }
+      ],
+      "request": { "kind": "instance_of", "type": { "namespace": "_global.search", "name": "Request" } }
+    },
+    {
+      "name": "bulk",
+      "visibility": "public",
+      "urls": [
+        { "path": "/_bulk", "methods": ["POST", "PUT"] },
+        { "path": "/{index}/_bulk", "methods": ["POST", "PUT"] }
+      ],
+      "request": { "kind": "instance_of", "type": { "namespace": "_global.bulk", "name": "Request" } }
+    },
+    {
+      "name": "indices.get_mapping",
+      "visibility": "public",
+      "urls": [
+        { "path": "/_mapping", "methods": ["GET"] },
+        { "path": "/{index}/_mapping", "methods": ["GET"] }
+      ],
+      "request": { "kind": "instance_of", "type": { "namespace": "indices.get_mapping", "name": "Request" } }
+    },
+    {
+      "name": "cluster.health",
+      "visibility": "public",
+      "urls": [
+        { "path": "/_cluster/health", "methods": ["GET"] },
+        { "path": "/_cluster/health/{index}", "methods": ["GET"] }
+      ],
+      "request": { "kind": "instance_of", "type": { "namespace": "cluster.health", "name": "Request" } }
+    },
+    {
+      "name": "cluster.stats",
+      "visibility": "public",
+      "urls": [{ "path": "/_cluster/stats", "methods": ["GET"] }],
+      "request": { "kind": "instance_of", "type": { "namespace": "cluster.stats", "name": "Request" } }
+    },
+    {
+      "name": "count",
+      "visibility": "public",
+      "urls": [
+        { "path": "/_count", "methods": ["POST", "GET"] },
+        { "path": "/{index}/_count", "methods": ["POST", "GET"] }
+      ],
+      "request": { "kind": "instance_of", "type": { "namespace": "_global.count", "name": "Request" } }
+    }
+  ],
+  "types": [
+    {
+      "kind": "request",
+      "namespace": "_global.search",
+      "name": "Request",
+      "query": [
+        {
+          "name": "expand_wildcards",
+          "type": { "kind": "instance_of", "type": { "namespace": "_types", "name": "ExpandWildcards" } }
+        },
+        { "name": "pretty", "type": { "kind": "instance_of", "type": { "namespace": "_builtins", "name": "boolean" } } },
+        { "name": "timeout", "type": { "kind": "instance_of", "type": { "namespace": "_types", "name": "Time" } } },
+        { "name": "ignore_unavailable", "type": { "kind": "instance_of", "type": { "namespace": "_builtins", "name": "boolean" } } },
+        { "name": "allow_no_indices", "type": { "kind": "instance_of", "type": { "namespace": "_builtins", "name": "boolean" } } },
+        { "name": "scroll", "type": { "kind": "instance_of", "type": { "namespace": "_types", "name": "Time" } } },
+        { "name": "routing", "type": { "kind": "instance_of", "type": { "namespace": "_builtins", "name": "string" } } }
+      ],
+      "body": [
+        { "name": "query", "type": { "kind": "instance_of", "type": { "namespace": "_types.query_dsl", "name": "QueryContainer" } } },
+        { "name": "aggs", "type": { "kind": "instance_of", "type": { "namespace": "_types.aggregations", "name": "AggregationContainer" } } },
+        { "name": "aggregations", "type": { "kind": "instance_of", "type": { "namespace": "_types.aggregations", "name": "AggregationContainer" } } },
+        { "name": "size", "type": { "kind": "instance_of", "type": { "namespace": "_builtins", "name": "integer" } } },
+        { "name": "from", "type": { "kind": "instance_of", "type": { "namespace": "_builtins", "name": "integer" } } },
+        { "name": "sort", "type": { "kind": "instance_of", "type": { "namespace": "_types", "name": "Sort" } } },
+        { "name": "_source", "type": { "kind": "instance_of", "type": { "namespace": "_types", "name": "SourceConfig" } } },
+        { "name": "track_total_hits", "type": { "kind": "instance_of", "type": { "namespace": "_builtins", "name": "boolean" } } }
+      ]
+    },
+    {
+      "kind": "request",
+      "namespace": "cluster.health",
+      "name": "Request",
+      "query": [
+        { "name": "pretty", "type": { "kind": "instance_of", "type": { "namespace": "_builtins", "name": "boolean" } } },
+        { "name": "timeout", "type": { "kind": "instance_of", "type": { "namespace": "_types", "name": "Time" } } }
+      ]
+    },
+    {
+      "kind": "enum",
+      "namespace": "_types",
+      "name": "ExpandWildcards",
+      "members": [
+        { "name": "open" },
+        { "name": "closed" },
+        { "name": "hidden" },
+        { "name": "none" },
+        { "name": "all" }
+      ]
+    },
+    {
+      "kind": "interface",
+      "namespace": "_types.query_dsl",
+      "name": "QueryContainer",
+      "variants": [
+        { "name": "bool", "type": { "namespace": "_types.query_dsl", "name": "BoolQuery" } },
+        { "name": "term", "type": { "namespace": "_types.query_dsl", "name": "TermQuery" } },
+        { "name": "terms", "type": { "namespace": "_types.query_dsl", "name": "TermsQuery" } },
+        { "name": "range", "type": { "namespace": "_types.query_dsl", "name": "RangeQuery" } },
+        { "name": "match", "type": { "namespace": "_types.query_dsl", "name": "MatchQuery" } },
+        { "name": "exists", "type": { "namespace": "_types.query_dsl", "name": "ExistsQuery" } },
+        { "name": "match_all", "type": { "namespace": "_types.query_dsl", "name": "MatchAllQuery" } },
+        { "name": "wildcard", "type": { "namespace": "_types.query_dsl", "name": "WildcardQuery" } },
+        { "name": "prefix", "type": { "namespace": "_types.query_dsl", "name": "PrefixQuery" } },
+        { "name": "nested", "type": { "namespace": "_types.query_dsl", "name": "NestedQuery" } }
+      ]
+    },
+    {
+      "kind": "interface",
+      "namespace": "_types.query_dsl",
+      "name": "BoolQuery",
+      "properties": [
+        { "name": "filter" },
+        { "name": "must" },
+        { "name": "must_not" },
+        { "name": "should" },
+        { "name": "minimum_should_match" },
+        { "name": "boost" }
+      ]
+    },
+    {
+      "kind": "interface",
+      "namespace": "_types.query_dsl",
+      "name": "ExistsQuery",
+      "properties": [{ "name": "field" }]
+    },
+    {
+      "kind": "interface",
+      "namespace": "_types.query_dsl",
+      "name": "MatchQuery",
+      "properties": [
+        { "name": "query" },
+        { "name": "operator", "type": { "kind": "instance_of", "type": { "namespace": "_types.query_dsl", "name": "Operator" } } }
+      ]
+    },
+    {
+      "kind": "enum",
+      "namespace": "_types.query_dsl",
+      "name": "Operator",
+      "members": [{ "name": "and" }, { "name": "or" }]
+    },
+    {
+      "kind": "interface",
+      "namespace": "_types.aggregations",
+      "name": "AggregationContainer",
+      "variants": [
+        { "name": "terms", "type": { "namespace": "_types.aggregations", "name": "TermsAggregation" } },
+        { "name": "date_histogram", "type": { "namespace": "_types.aggregations", "name": "DateHistogramAggregation" } },
+        { "name": "avg", "type": { "namespace": "_types.aggregations", "name": "AverageAggregation" } },
+        { "name": "sum", "type": { "namespace": "_types.aggregations", "name": "SumAggregation" } },
+        { "name": "cardinality", "type": { "namespace": "_types.aggregations", "name": "CardinalityAggregation" } },
+        { "name": "bucket_sort", "type": { "namespace": "_types.aggregations", "name": "BucketSortAggregation" } }
+      ],
+      "properties": [
+        { "name": "aggs" },
+        { "name": "aggregations" },
+        { "name": "meta" }
+      ]
+    },
+    {
+      "kind": "interface",
+      "namespace": "_types.aggregations",
+      "name": "TermsAggregation",
+      "properties": [
+        { "name": "field" },
+        { "name": "size" },
+        { "name": "order" },
+        { "name": "min_doc_count" }
+      ]
+    },
+    {
+      "kind": "interface",
+      "namespace": "_types.aggregations",
+      "name": "DateHistogramAggregation",
+      "properties": [
+        { "name": "field" },
+        { "name": "calendar_interval" }
+      ]
+    },
+    {
+      "kind": "interface",
+      "namespace": "_types.aggregations",
+      "name": "AverageAggregation",
+      "properties": [{ "name": "field" }]
+    },
+    {
+      "kind": "interface",
+      "namespace": "_types.aggregations",
+      "name": "SumAggregation",
+      "properties": [{ "name": "field" }]
+    },
+    {
+      "kind": "interface",
+      "namespace": "_types.aggregations",
+      "name": "CardinalityAggregation",
+      "properties": [{ "name": "field" }]
+    },
+    {
+      "kind": "interface",
+      "namespace": "_types.aggregations",
+      "name": "BucketSortAggregation",
+      "properties": [{ "name": "sort" }]
+    }
+  ]
+}

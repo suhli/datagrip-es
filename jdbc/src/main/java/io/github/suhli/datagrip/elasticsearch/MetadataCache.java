@@ -9,8 +9,8 @@ import java.util.Map;
 import java.util.concurrent.locks.ReentrantReadWriteLock;
 
 /** Thread-safe short-TTL cache for Elasticsearch metadata. */
-final class MetadataCache {
-    static final Duration DEFAULT_TTL = Duration.ofSeconds(3);
+public final class MetadataCache {
+    public static final Duration DEFAULT_TTL = Duration.ofSeconds(3);
 
     private final ReentrantReadWriteLock lock = new ReentrantReadWriteLock();
     private final Duration ttl;
@@ -18,15 +18,15 @@ final class MetadataCache {
     private long indicesLoadedAt;
     private final Map<String, CachedMapping> indexMappings = new LinkedHashMap<>();
 
-    MetadataCache() {
+    public MetadataCache() {
         this(DEFAULT_TTL);
     }
 
-    MetadataCache(Duration ttl) {
+    public MetadataCache(Duration ttl) {
         this.ttl = ttl;
     }
 
-    List<IndexInfo> indicesIfFresh() {
+    public List<IndexInfo> indicesIfFresh() {
         lock.readLock().lock();
         try {
             return isFresh(indicesLoadedAt) ? indices : null;
@@ -35,7 +35,7 @@ final class MetadataCache {
         }
     }
 
-    void putIndices(List<IndexInfo> value) {
+    public void putIndices(List<IndexInfo> value) {
         lock.writeLock().lock();
         try {
             indices = List.copyOf(value);
@@ -45,7 +45,7 @@ final class MetadataCache {
         }
     }
 
-    JsonNode mappingIfFresh(String index) {
+    public JsonNode mappingIfFresh(String index) {
         lock.readLock().lock();
         try {
             CachedMapping cached = indexMappings.get(index);
@@ -55,7 +55,7 @@ final class MetadataCache {
         }
     }
 
-    void putMapping(String index, JsonNode mapping) {
+    public void putMapping(String index, JsonNode mapping) {
         lock.writeLock().lock();
         try {
             indexMappings.put(index, new CachedMapping(mapping, System.nanoTime()));
@@ -64,11 +64,11 @@ final class MetadataCache {
         }
     }
 
-    void refresh() {
+    public void refresh() {
         invalidate();
     }
 
-    void invalidate() {
+    public void invalidate() {
         lock.writeLock().lock();
         try {
             indices = null;
@@ -79,7 +79,7 @@ final class MetadataCache {
         }
     }
 
-    void invalidateIndex(String index) {
+    public void invalidateIndex(String index) {
         lock.writeLock().lock();
         try {
             indexMappings.remove(index);
@@ -92,7 +92,7 @@ final class MetadataCache {
         return loadedAt > 0 && System.nanoTime() - loadedAt <= ttl.toNanos();
     }
 
-    record IndexInfo(String name, String health, String status, String docsCount, String storeSize) {}
+    public record IndexInfo(String name, String health, String status, String docsCount, String storeSize) {}
 
     private record CachedMapping(JsonNode mapping, long loadedAt) {}
 }

@@ -24,7 +24,6 @@ import java.util.concurrent.Executor;
 
 final class JdbcProxies {
     private static final ObjectMapper JSON = new ObjectMapper();
-    static final int MAPPING_BATCH_SIZE = 50;
 
     private JdbcProxies() {}
 
@@ -637,7 +636,7 @@ final class JdbcProxies {
             }
             if (missing.isEmpty()) return result;
 
-            final int batchSize = MAPPING_BATCH_SIZE;
+            final int batchSize = EsClusterMetadata.MAPPING_BATCH_SIZE;
             for (int offset = 0; offset < missing.size(); offset += batchSize) {
                 List<String> batch = missing.subList(offset, Math.min(offset + batchSize, missing.size()));
                 String path = "/" + String.join(",", batch) + "/_mapping";

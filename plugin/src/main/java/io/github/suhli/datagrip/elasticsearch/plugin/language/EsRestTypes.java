@@ -5,14 +5,14 @@ import com.intellij.psi.tree.IFileElementType;
 import com.intellij.psi.tree.TokenSet;
 import com.intellij.sql.psi.stubs.SqlFileElementType;
 
-final class EsRestTypes {
+public final class EsRestTypes {
     static final IFileElementType FILE =
             new SqlFileElementType("ES_REST_FILE", EsRestLanguage.INSTANCE);
-    static final IElementType REQUEST = type("REQUEST");
+    public static final IElementType REQUEST = type("REQUEST");
     static final IElementType OBJECT = type("OBJECT");
     static final IElementType ARRAY = type("ARRAY");
-    static final IElementType METHOD = type("METHOD");
-    static final IElementType PATH = type("PATH");
+    public static final IElementType METHOD = type("METHOD");
+    public static final IElementType PATH = type("PATH");
     static final IElementType COMMENT = type("COMMENT");
     static final IElementType STRING = type("STRING");
     static final IElementType NUMBER = type("NUMBER");
