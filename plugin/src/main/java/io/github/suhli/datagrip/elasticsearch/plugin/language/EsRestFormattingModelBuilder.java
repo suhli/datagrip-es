@@ -25,7 +25,7 @@ import java.util.List;
 public final class EsRestFormattingModelBuilder implements FormattingModelBuilder {
     @Override
     public @NotNull FormattingModel createModel(@NotNull FormattingContext context) {
-        PsiElement element = context.getPsiElement();
+        PsiElement element = context.getContainingFile();
         CodeStyleSettings settings = context.getCodeStyleSettings();
         return FormattingModelProvider.createFormattingModelForPsiFile(
                 element.getContainingFile(),
@@ -116,7 +116,9 @@ public final class EsRestFormattingModelBuilder implements FormattingModelBuilde
         }
 
         private static boolean isContainer(IElementType type) {
-            return type == EsRestTypes.OBJECT || type == EsRestTypes.ARRAY;
+            return type == EsRestTypes.REQUEST
+                    || type == EsRestTypes.OBJECT
+                    || type == EsRestTypes.ARRAY;
         }
 
         private static boolean isBracket(IElementType type) {
