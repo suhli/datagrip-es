@@ -22,6 +22,7 @@ dependencies {
             providers.gradleProperty("platformType"),
             providers.gradleProperty("platformVersion"),
         )
+        bundledPlugin("com.intellij.modules.json")
         bundledPlugin("com.intellij.database")
         testFramework(org.jetbrains.intellij.platform.gradle.TestFrameworkType.Platform)
     }
