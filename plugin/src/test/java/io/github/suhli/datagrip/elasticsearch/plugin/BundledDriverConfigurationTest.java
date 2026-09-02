@@ -18,6 +18,7 @@ class BundledDriverConfigurationTest {
         var artifactRef = driver.getElementsByTagName("artifact").item(0).getAttributes();
         assertEquals("elasticsearch.rest.bundled", artifactRef.getNamedItem("name").getNodeValue());
         assertEquals("true", artifactRef.getNamedItem("use").getNodeValue());
+        assertEquals("true", artifactRef.getNamedItem("rolling").getNodeValue());
 
         var artifact = artifacts.getElementsByTagName("artifact").item(0).getAttributes();
         assertEquals("elasticsearch.rest.bundled", artifact.getNamedItem("id").getNodeValue());

@@ -7,7 +7,7 @@
         driver-class="io.github.suhli.datagrip.elasticsearch.ElasticsearchDriver">
         <url-template name="HTTP" template="jdbc:es-rest://{host:localhost}:{port:9200}"/>
         <url-template name="HTTPS" template="jdbc:es-rest:https://{host:localhost}:{port:9200}"/>
-        <artifact name="elasticsearch.rest.bundled" use="true" rolling="false"/>
+        <artifact name="elasticsearch.rest.bundled" use="true" rolling="true"/>
         <keep-alive-query>GET /</keep-alive-query>
         <option name="auto-sync" value="true"/>
         <jdbc-additional-properties>
