@@ -55,6 +55,35 @@ class TargetedFixesTest {
     }
 
     @Test
+    void validatesQueryAndNetworkTimeoutArguments() throws Exception {
+        RecordingTransport transport = new RecordingTransport();
+        EsJdbcUrl config = EsJdbcUrl.parse("jdbc:es-rest://localhost:9200", new Properties());
+        EsVersion version = new EsVersion("Elasticsearch", "8.17.0", "elasticsearch", "cluster", "uuid");
+        try (Connection connection = JdbcProxies.open(config, transport, version);
+             Statement statement = connection.createStatement()) {
+            SQLException query = assertThrows(SQLException.class, () -> statement.setQueryTimeout(-1));
+            assertEquals("HY092", query.getSQLState());
+            statement.setQueryTimeout(Integer.MAX_VALUE);
+            SQLException overflow = assertThrows(
+                    SQLException.class, () -> statement.executeQuery("GET /too-slow"));
+            assertEquals("HY092", overflow.getSQLState());
+            statement.setQueryTimeout(0);
+
+            SQLException nullExecutor = assertThrows(
+                    SQLException.class, () -> connection.setNetworkTimeout(null, 1));
+            assertEquals("HY009", nullExecutor.getSQLState());
+            SQLException negative = assertThrows(
+                    SQLException.class, () -> connection.setNetworkTimeout(Runnable::run, -1));
+            assertEquals("HY092", negative.getSQLState());
+
+            connection.setNetworkTimeout(Runnable::run, 0);
+            assertEquals(0, connection.getNetworkTimeout());
+            connection.setNetworkTimeout(Runnable::run, 1234);
+            assertEquals(1234, connection.getNetworkTimeout());
+        }
+    }
+
+    @Test
     void jdbcLikePatternEscapeAndLiteralUnderscore() {
         assertTrue(JdbcLikePattern.matches("game_logs", "game_logs"));
         assertTrue(JdbcLikePattern.matches("gameXlogs", "game_logs"));

@@ -174,11 +174,16 @@ public final class CompletionGenerator {
             List<String> enums = resolveEnumValues(typeNode, types);
             boolean deprecated = !prop.path("deprecation").isMissingNode()
                     && !prop.path("deprecation").isNull();
+            String deprecatedVersion = deprecated ? firstNonBlank(
+                    text(prop.path("deprecation"), "version"),
+                    text(prop.path("deprecation"), "asOf")) : null;
             output.put(name, new QueryParameter(
                     name,
                     typeName.isEmpty() ? "string" : typeName,
                     enums,
                     firstNonBlank(text(prop, "description"), null),
+                    firstNonBlank(text(prop.path("availability").path("stack"), "since"), null),
+                    deprecatedVersion,
                     deprecated));
         }
     }
@@ -227,7 +232,7 @@ public final class CompletionGenerator {
             String key = variant.name();
             JsonNode type = types.get(variant.typeKey());
             List<String> children = propertyNames(type);
-            boolean fieldRef = looksLikeFieldQuery(key, children, variant.typeNode());
+            boolean fieldRef = looksLikeFieldQuery(key, variant.typeNode());
             boolean deprecated = variant.deprecated();
             keys.put(key, new DslKey(
                     key,
@@ -526,10 +531,11 @@ public final class CompletionGenerator {
         return List.copyOf(names);
     }
 
-    private static boolean looksLikeFieldQuery(String key, List<String> children, JsonNode typeNode) {
+    private static boolean looksLikeFieldQuery(String key, JsonNode typeNode) {
         if (Set.of("term", "terms", "match", "match_phrase", "range", "prefix", "wildcard",
-                "regexp", "fuzzy", "exists").contains(key)) return true;
-        if (children.contains("field") || children.contains("fields")) return true;
+                "regexp", "fuzzy").contains(key)) return true;
+        // A regular object having a "field" or "fields" property (for example
+        // multi_match) is not a dictionary whose keys are mapping field names.
         return isFieldDictionary(typeNode);
     }
 

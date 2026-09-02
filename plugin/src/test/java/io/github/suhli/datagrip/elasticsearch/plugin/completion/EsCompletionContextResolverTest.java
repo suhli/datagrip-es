@@ -298,7 +298,7 @@ class EsCompletionContextResolverTest {
                         List.of(new EsSchemaModels.QueryParam(
                                 "expand_wildcards", "enum",
                                 List.of("open", "closed", "hidden", "none", "all"),
-                                "", false)),
+                                "", "", "", false)),
                         "_global.search.Request",
                         "", "", "", false)),
                 Map.of(

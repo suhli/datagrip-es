@@ -9,7 +9,6 @@ import io.github.suhli.datagrip.elasticsearch.plugin.language.EsRestTypes;
 
 import com.intellij.psi.PsiElement;
 import com.intellij.psi.PsiFile;
-import com.intellij.psi.util.PsiTreeUtil;
 
 import java.util.ArrayList;
 import java.util.Arrays;
@@ -31,7 +30,7 @@ public final class EsCompletionContextResolver {
             "query", "bool.must", "bool.filter", "bool.should", "bool.must_not",
             "constant_score.filter", "nested.query", "function_score.query");
     private static final Set<String> FIELD_QUERY_KEYS = Set.of(
-            "term", "terms", "match", "match_phrase", "multi_match", "range", "prefix",
+            "term", "terms", "match", "match_phrase", "range", "prefix",
             "wildcard", "regexp", "fuzzy", "exists");
 
     private final EsCompletionSchema schema;
@@ -241,11 +240,10 @@ public final class EsCompletionContextResolver {
     }
 
     private boolean isFieldKeyContext(String path, String parent, List<EsJsonPathScanner.Frame> stack) {
-        if (FIELD_QUERY_KEYS.contains(parent)) {
-            // term/match/range object keys are field names
-            return !"exists".equals(parent);
-        }
-        return false;
+        EsSchemaModels.DslNode node = schema.findKey(parent);
+        if (node != null) return "field_object".equals(node.valueType());
+        // Compatibility fallback for gaps in older generated resources.
+        return FIELD_QUERY_KEYS.contains(parent) && !"exists".equals(parent);
     }
 
     /**
@@ -253,7 +251,11 @@ public final class EsCompletionContextResolver {
      * {@code term}. The caret may be inside the value quotes while the key is still empty.
      */
     private boolean isEmptyFieldKeyPlaceholderContext(EsJsonPathScanner.ScanResult scan, String parent) {
-        if (!FIELD_QUERY_KEYS.contains(parent) || "exists".equals(parent)) {
+        EsSchemaModels.DslNode node = schema.findKey(parent);
+        boolean fieldObject = node != null
+                ? "field_object".equals(node.valueType())
+                : FIELD_QUERY_KEYS.contains(parent) && !"exists".equals(parent);
+        if (!fieldObject) {
             return false;
         }
         if (scan.expectingKey() || !scan.insideString()) {
@@ -307,7 +309,7 @@ public final class EsCompletionContextResolver {
             }
             current = current.getParent();
         }
-        return PsiTreeUtil.getParentOfType(element, PsiElement.class);
+        return null;
     }
 
     private static int findRequestStart(CharSequence text, int offset) {

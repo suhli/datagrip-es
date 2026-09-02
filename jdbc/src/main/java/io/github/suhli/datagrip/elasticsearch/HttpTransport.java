@@ -35,6 +35,7 @@ public final class HttpTransport implements Transport {
     private final long connectTimeoutMillis;
     private final long defaultResponseTimeoutMillis;
     private volatile int networkTimeoutMillis;
+    private volatile boolean networkTimeoutDisabled;
 
     public HttpTransport(EsJdbcUrl config) throws GeneralSecurityException {
         var managerBuilder = PoolingHttpClientConnectionManagerBuilder.create();
@@ -50,6 +51,7 @@ public final class HttpTransport implements Transport {
         connectTimeoutMillis = config.connectTimeout().toMillis();
         defaultResponseTimeoutMillis = config.responseTimeout().toMillis();
         networkTimeoutMillis = 0;
+        networkTimeoutDisabled = false;
         RequestConfig requestConfig = RequestConfig.custom()
                 .setConnectTimeout(Timeout.ofMilliseconds(connectTimeoutMillis))
                 .setResponseTimeout(Timeout.ofMilliseconds(defaultResponseTimeoutMillis))
@@ -63,7 +65,9 @@ public final class HttpTransport implements Transport {
 
     @Override
     public void setNetworkTimeoutMillis(int milliseconds) {
-        networkTimeoutMillis = Math.max(0, milliseconds);
+        if (milliseconds < 0) throw new IllegalArgumentException("Network timeout must be non-negative");
+        networkTimeoutMillis = milliseconds;
+        networkTimeoutDisabled = milliseconds == 0;
     }
 
     private static Map<String, String> authenticationHeaders(EsJdbcUrl config) {
@@ -109,11 +113,10 @@ public final class HttpTransport implements Transport {
     @Override
     public Response execute(Request request, ExecuteOptions options) throws IOException {
         long started = System.nanoTime();
-        long responseTimeout = resolveResponseTimeout(options);
         HttpClientContext context = HttpClientContext.create();
         RequestConfig requestConfig = RequestConfig.custom()
                 .setConnectTimeout(Timeout.ofMilliseconds(connectTimeoutMillis))
-                .setResponseTimeout(Timeout.ofMilliseconds(responseTimeout))
+                .setResponseTimeout(resolveResponseTimeout(options))
                 .build();
         context.setRequestConfig(requestConfig);
 
@@ -159,14 +162,17 @@ public final class HttpTransport implements Transport {
         }
     }
 
-    private long resolveResponseTimeout(ExecuteOptions options) {
+    private Timeout resolveResponseTimeout(ExecuteOptions options) {
         if (options != null && options.timeoutMillis() > 0) {
-            return options.timeoutMillis();
+            return Timeout.ofMilliseconds(options.timeoutMillis());
+        }
+        if (networkTimeoutDisabled) {
+            return Timeout.ZERO_MILLISECONDS;
         }
         if (networkTimeoutMillis > 0) {
-            return networkTimeoutMillis;
+            return Timeout.ofMilliseconds(networkTimeoutMillis);
         }
-        return defaultResponseTimeoutMillis;
+        return Timeout.ofMilliseconds(defaultResponseTimeoutMillis);
     }
 
     @Override

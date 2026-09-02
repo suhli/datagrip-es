@@ -26,6 +26,7 @@ public final class EsClusterMetadata {
     private final Transport transport;
     private final URI endpoint;
     private final MetadataCache cache;
+    private volatile String clusterVersion = "";
 
     public EsClusterMetadata(Transport transport, URI endpoint) {
         this(transport, endpoint, DEFAULT_TTL);
@@ -131,8 +132,22 @@ public final class EsClusterMetadata {
         return Map.copyOf(result);
     }
 
+    public String clusterVersion() throws IOException {
+        String cached = clusterVersion;
+        if (!cached.isBlank()) return cached;
+        Transport.Response response = transport.execute(new Transport.Request(
+                "GET", endpoint, Map.of(), null));
+        if (!response.successful()) {
+            throw new IOException("Reading cluster version failed with HTTP " + response.status());
+        }
+        String loaded = JSON.readTree(response.body()).path("version").path("number").asText("");
+        if (!loaded.isBlank()) clusterVersion = loaded;
+        return loaded;
+    }
+
     public void invalidate() {
         cache.invalidate();
+        clusterVersion = "";
     }
 
     private static URI join(URI endpoint, String path) {

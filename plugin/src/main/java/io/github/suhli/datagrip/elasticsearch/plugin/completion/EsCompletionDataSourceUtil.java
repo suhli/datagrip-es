@@ -47,7 +47,7 @@ public final class EsCompletionDataSourceUtil {
         DbDataSource dataSource = findDataSource(parameters);
         if (dataSource == null) return "";
         try {
-            return dataSource.getName();
+            return EsCompletionMetadataRegistrar.datasourceId(dataSource);
         } catch (Throwable ignored) {
             return "";
         }

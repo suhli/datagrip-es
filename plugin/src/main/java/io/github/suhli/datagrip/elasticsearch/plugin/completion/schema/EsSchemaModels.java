@@ -21,6 +21,8 @@ public final class EsSchemaModels {
             String type,
             List<String> enumValues,
             String description,
+            String minVersion,
+            String deprecatedVersion,
             boolean deprecated) {}
 
     public record DslNode(

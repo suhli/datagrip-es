@@ -29,6 +29,8 @@ record QueryParameter(
         String type,
         List<String> enumValues,
         String description,
+        String minVersion,
+        String deprecatedVersion,
         boolean deprecated) {}
 
 record DslCompletionDocument(

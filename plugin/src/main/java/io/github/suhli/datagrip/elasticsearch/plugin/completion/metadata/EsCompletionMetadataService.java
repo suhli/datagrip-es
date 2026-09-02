@@ -1,8 +1,11 @@
 package io.github.suhli.datagrip.elasticsearch.plugin.completion.metadata;
 
 import com.intellij.database.psi.DbDataSource;
+import com.intellij.database.psi.DataSourceManager;
+import com.intellij.database.model.RawDataSource;
 import com.intellij.openapi.application.ApplicationManager;
 import com.intellij.openapi.components.Service;
+import com.intellij.openapi.Disposable;
 import com.intellij.openapi.diagnostic.Logger;
 import com.intellij.openapi.project.Project;
 import org.jetbrains.annotations.NotNull;
@@ -17,6 +20,7 @@ import java.util.Set;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicReference;
+import java.util.function.Consumer;
 import java.util.regex.Pattern;
 
 /**
@@ -24,19 +28,40 @@ import java.util.regex.Pattern;
  * network refresh happens on background threads.
  */
 @Service(Service.Level.PROJECT)
-public final class EsCompletionMetadataService {
+public final class EsCompletionMetadataService implements Disposable {
     private static final Logger LOG = Logger.getInstance(EsCompletionMetadataService.class);
     public static final long TTL_MILLIS = 20_000L;
+    static final int MAX_WILDCARD_MAPPING_TARGETS = 100;
 
     private final Project project;
+    private final Consumer<Runnable> backgroundExecutor;
     private final ConcurrentHashMap<String, AtomicReference<EsCompletionMetadataSnapshot>> snapshots =
             new ConcurrentHashMap<>();
-    private final ConcurrentHashMap<String, AtomicBoolean> refreshing = new ConcurrentHashMap<>();
-    private final ConcurrentHashMap<String, EsCompletionMetadataProvider> providers =
+    private final ConcurrentHashMap<String, RefreshState> refreshStates = new ConcurrentHashMap<>();
+    private final ConcurrentHashMap<String, ProviderState> providers =
             new ConcurrentHashMap<>();
 
     public EsCompletionMetadataService(@NotNull Project project) {
         this.project = project;
+        this.backgroundExecutor = runnable ->
+                ApplicationManager.getApplication().executeOnPooledThread(runnable);
+        project.getMessageBus().connect(this).subscribe(DataSourceManager.TOPIC, new DataSourceManager.Listener() {
+            @Override
+            public <T extends RawDataSource> void dataSourceRemoved(DataSourceManager<T> manager, T dataSource) {
+                unregisterProvider(rawDatasourceId(dataSource));
+            }
+
+            @Override
+            public <T extends RawDataSource> void dataSourceChanged(DataSourceManager<T> manager, T dataSource) {
+                // The next completion recreates the provider from the new effective config.
+                unregisterProvider(rawDatasourceId(dataSource));
+            }
+        });
+    }
+
+    EsCompletionMetadataService(Consumer<Runnable> backgroundExecutor) {
+        this.project = null;
+        this.backgroundExecutor = backgroundExecutor;
     }
 
     public static EsCompletionMetadataService getInstance(Project project) {
@@ -44,19 +69,36 @@ public final class EsCompletionMetadataService {
     }
 
     public void registerProvider(EsCompletionMetadataProvider provider) {
+        registerProvider(provider == null ? "" : provider.datasourceId(), "", provider);
+    }
+
+    public void registerProvider(String datasourceId, String configFingerprint, EsCompletionMetadataProvider provider) {
         if (provider == null || provider.datasourceId() == null) return;
-        providers.put(provider.datasourceId(), provider);
+        ProviderState replacement = new ProviderState(
+                configFingerprint == null ? "" : configFingerprint, provider);
+        ProviderState previous = providers.put(datasourceId, replacement);
+        if (previous != null && previous.provider() != provider) {
+            closeProvider(previous.provider());
+            snapshots.remove(datasourceId);
+            refreshStates.remove(datasourceId);
+        }
     }
 
     public boolean hasProvider(@Nullable String datasourceId) {
         return datasourceId != null && !datasourceId.isBlank() && providers.containsKey(datasourceId);
     }
 
+    public boolean hasProvider(@Nullable String datasourceId, String configFingerprint) {
+        ProviderState state = datasourceId == null ? null : providers.get(datasourceId);
+        return state != null && state.fingerprint().equals(configFingerprint == null ? "" : configFingerprint);
+    }
+
     public void unregisterProvider(String datasourceId) {
         if (datasourceId == null) return;
-        providers.remove(datasourceId);
+        ProviderState removed = providers.remove(datasourceId);
+        if (removed != null) closeProvider(removed.provider());
         snapshots.remove(datasourceId);
-        refreshing.remove(datasourceId);
+        refreshStates.remove(datasourceId);
     }
 
     public EsCompletionMetadataSnapshot snapshot(@Nullable String datasourceId) {
@@ -66,9 +108,9 @@ public final class EsCompletionMetadataService {
         AtomicReference<EsCompletionMetadataSnapshot> ref =
                 snapshots.computeIfAbsent(datasourceId, id -> new AtomicReference<>(EsCompletionMetadataSnapshot.EMPTY));
         EsCompletionMetadataSnapshot current = ref.get();
-        if (current.isExpired(System.currentTimeMillis(), TTL_MILLIS)
-                || current.indices().isEmpty()) {
-            scheduleRefresh(datasourceId, List.of());
+        RefreshState state = refreshStates.computeIfAbsent(datasourceId, ignored -> new RefreshState());
+        if (state.targetsExpired(System.currentTimeMillis())) {
+            scheduleRefresh(datasourceId, true, List.of());
         }
         return current;
     }
@@ -100,13 +142,21 @@ public final class EsCompletionMetadataService {
         }
         final EsCompletionMetadataSnapshot snapshot = current;
         List<String> concrete = resolveIndices(snapshot, indexPatterns);
-        boolean missingFields = concrete.stream().anyMatch(index ->
-                snapshot.fields().values().stream().noneMatch(f -> f.indexCoverage().contains(index)));
-        if (missingFields && !concrete.isEmpty()) {
-            scheduleRefresh(datasourceId, concrete);
+        if (concrete.size() > MAX_WILDCARD_MAPPING_TARGETS) {
+            concrete = concrete.subList(0, MAX_WILDCARD_MAPPING_TARGETS);
+        }
+        RefreshState refreshState = datasourceId == null
+                ? null
+                : refreshStates.computeIfAbsent(datasourceId, ignored -> new RefreshState());
+        long now = System.currentTimeMillis();
+        List<String> missing = refreshState == null ? List.of() : concrete.stream()
+                .filter(index -> refreshState.mappingExpired(index, now))
+                .toList();
+        if (!missing.isEmpty()) {
+            scheduleRefresh(datasourceId, false, missing);
         }
         if (concrete.isEmpty()) {
-            return enrichFromModel(snapshot, dataSource, List.of());
+            return copyWithFields(snapshot, Map.of());
         }
 
         Map<String, EsCompletionMetadataSnapshot.FieldInfo> filtered = filterFields(snapshot, concrete);
@@ -118,9 +168,6 @@ public final class EsCompletionMetadataService {
                 EsDbModelFields.load(dataSource, concrete);
         if (!modelFields.isEmpty()) {
             return copyWithFields(snapshot, modelFields);
-        }
-        if (!snapshot.fields().isEmpty()) {
-            return snapshot;
         }
         return enrichFromModel(snapshot, dataSource, concrete);
     }
@@ -157,11 +204,9 @@ public final class EsCompletionMetadataService {
         if (dataSource == null || !snapshot.fields().isEmpty()) {
             return snapshot;
         }
-        List<String> targets = indexNames.isEmpty()
-                ? snapshot.indices().stream().map(EsCompletionMetadataSnapshot.IndexObject::name).limit(1).toList()
-                : indexNames;
+        if (indexNames.isEmpty()) return snapshot;
         Map<String, EsCompletionMetadataSnapshot.FieldInfo> modelFields =
-                EsDbModelFields.load(dataSource, targets);
+                EsDbModelFields.load(dataSource, indexNames);
         if (modelFields.isEmpty()) {
             return snapshot;
         }
@@ -174,39 +219,136 @@ public final class EsCompletionMetadataService {
                 .set(stored);
     }
 
-    private void scheduleRefresh(@Nullable String datasourceId, List<String> indexNames) {
+    private void scheduleRefresh(
+            @Nullable String datasourceId, boolean refreshTargets, List<String> indexNames) {
         if (datasourceId == null || datasourceId.isBlank()) return;
-        EsCompletionMetadataProvider provider = providers.get(datasourceId);
+        ProviderState provider = providers.get(datasourceId);
         if (provider == null) return;
-        AtomicBoolean flag = refreshing.computeIfAbsent(datasourceId, id -> new AtomicBoolean(false));
-        if (!flag.compareAndSet(false, true)) return;
+        RefreshState state = refreshStates.computeIfAbsent(datasourceId, id -> new RefreshState());
+        if (refreshTargets) state.targetsPending.set(true);
+        state.pendingIndices.addAll(indexNames);
+        if (!state.workerRunning.compareAndSet(false, true)) return;
+        backgroundExecutor.accept(() -> runRefreshWorker(datasourceId, provider, state));
+    }
 
-        ApplicationManager.getApplication().executeOnPooledThread(() -> {
-            try {
-                List<EsCompletionMetadataSnapshot.IndexObject> targets = provider.listTargets();
-                List<String> toLoad = new ArrayList<>(indexNames);
-                if (toLoad.isEmpty()) {
-                    toLoad.addAll(targets.stream().map(EsCompletionMetadataSnapshot.IndexObject::name).limit(50).toList());
+    private void runRefreshWorker(String datasourceId, ProviderState providerState, RefreshState state) {
+        for (;;) {
+            if (providers.get(datasourceId) != providerState) {
+                state.workerRunning.set(false);
+                return;
+            }
+            boolean loadTargets = state.targetsPending.getAndSet(false);
+            List<String> indices = drain(state.pendingIndices);
+            if (!loadTargets && indices.isEmpty()) {
+                state.workerRunning.set(false);
+                if ((!state.pendingIndices.isEmpty() || state.targetsPending.get())
+                        && state.workerRunning.compareAndSet(false, true)) {
+                    continue;
                 }
-                List<EsCompletionMetadataSnapshot.FieldInfo> fields = provider.loadFields(toLoad);
-                EsCompletionMetadataSnapshot previous = snapshot(datasourceId);
-                Map<String, EsCompletionMetadataSnapshot.FieldInfo> merged =
-                        new LinkedHashMap<>(previous.fields());
+                return;
+            }
+
+            long attemptedAt = System.currentTimeMillis();
+            List<EsCompletionMetadataSnapshot.IndexObject> targets = null;
+            List<EsCompletionMetadataSnapshot.FieldInfo> fields = null;
+            if (loadTargets) {
+                try {
+                    try {
+                        providerState.provider().refreshClusterMetadata();
+                    } catch (Exception versionFailure) {
+                        LOG.debug("Elasticsearch cluster version refresh failed", versionFailure);
+                    }
+                    targets = providerState.provider().listTargets();
+                } catch (Exception e) {
+                    LOG.debug("Elasticsearch completion target refresh failed", e);
+                } finally {
+                    state.targetsLoadedAt = attemptedAt;
+                }
+            }
+            if (!indices.isEmpty()) {
+                try {
+                    fields = providerState.provider().loadFields(indices);
+                } catch (Exception e) {
+                    LOG.debug("Elasticsearch completion mapping refresh failed", e);
+                } finally {
+                    for (String index : indices) state.mappingLoadedAt.put(index, attemptedAt);
+                }
+            }
+            if (providers.get(datasourceId) != providerState) continue;
+            mergeRefresh(datasourceId, providerState.provider(), targets, fields, indices, attemptedAt);
+        }
+    }
+
+    private void mergeRefresh(
+            String datasourceId,
+            EsCompletionMetadataProvider provider,
+            List<EsCompletionMetadataSnapshot.IndexObject> targets,
+            List<EsCompletionMetadataSnapshot.FieldInfo> fields,
+            List<String> refreshedIndices,
+            long loadedAt) {
+        AtomicReference<EsCompletionMetadataSnapshot> ref =
+                snapshots.computeIfAbsent(datasourceId, ignored -> new AtomicReference<>(EsCompletionMetadataSnapshot.EMPTY));
+        ref.updateAndGet(previous -> {
+            Map<String, EsCompletionMetadataSnapshot.FieldInfo> merged =
+                    removeCoverage(previous.fields(), fields == null ? List.of() : refreshedIndices);
+            if (fields != null) {
                 for (EsCompletionMetadataSnapshot.FieldInfo field : fields) {
                     merged.merge(field.path(), field, EsCompletionMetadataService::mergeField);
                 }
-                putSnapshot(new EsCompletionMetadataSnapshot(
-                        datasourceId,
-                        provider.esVersion(),
-                        targets,
-                        merged,
-                        System.currentTimeMillis()));
-            } catch (Exception e) {
-                LOG.debug("Elasticsearch completion metadata refresh failed", e);
-            } finally {
-                flag.set(false);
             }
+            return new EsCompletionMetadataSnapshot(
+                    datasourceId,
+                    provider.esVersion().isBlank() ? previous.esVersion() : provider.esVersion(),
+                    targets == null ? previous.indices() : targets,
+                    merged,
+                    loadedAt);
         });
+    }
+
+    private static Map<String, EsCompletionMetadataSnapshot.FieldInfo> removeCoverage(
+            Map<String, EsCompletionMetadataSnapshot.FieldInfo> fields, List<String> refreshedIndices) {
+        if (refreshedIndices.isEmpty()) return new LinkedHashMap<>(fields);
+        Set<String> refreshed = Set.copyOf(refreshedIndices);
+        Map<String, EsCompletionMetadataSnapshot.FieldInfo> result = new LinkedHashMap<>();
+        for (EsCompletionMetadataSnapshot.FieldInfo field : fields.values()) {
+            Set<String> coverage = new LinkedHashSet<>(field.indexCoverage());
+            coverage.removeAll(refreshed);
+            if (!coverage.isEmpty()) {
+                result.put(field.path(), new EsCompletionMetadataSnapshot.FieldInfo(
+                        field.path(), field.types(), coverage, field.multiField()));
+            }
+        }
+        return result;
+    }
+
+    private static List<String> drain(Set<String> pending) {
+        List<String> result = new ArrayList<>();
+        for (String value : pending) {
+            if (pending.remove(value)) result.add(value);
+        }
+        return result;
+    }
+
+    private static void closeProvider(EsCompletionMetadataProvider provider) {
+        try {
+            provider.close();
+        } catch (Exception e) {
+            LOG.debug("Cannot close Elasticsearch completion metadata provider", e);
+        }
+    }
+
+    private static String rawDatasourceId(RawDataSource dataSource) {
+        if (dataSource == null) return "";
+        String uniqueId = dataSource.getUniqueId();
+        return uniqueId == null || uniqueId.isBlank() ? dataSource.getName() : uniqueId;
+    }
+
+    @Override
+    public void dispose() {
+        providers.values().forEach(state -> closeProvider(state.provider()));
+        providers.clear();
+        snapshots.clear();
+        refreshStates.clear();
     }
 
     public static List<String> resolveIndices(EsCompletionMetadataSnapshot snapshot, List<String> patterns) {
@@ -255,5 +397,24 @@ public final class EsCompletionMetadataService {
         coverage.addAll(right.indexCoverage());
         return new EsCompletionMetadataSnapshot.FieldInfo(
                 left.path(), types, coverage, left.multiField() || right.multiField());
+    }
+
+    private record ProviderState(String fingerprint, EsCompletionMetadataProvider provider) {}
+
+    private static final class RefreshState {
+        private final Set<String> pendingIndices = ConcurrentHashMap.newKeySet();
+        private final AtomicBoolean targetsPending = new AtomicBoolean();
+        private final AtomicBoolean workerRunning = new AtomicBoolean();
+        private final ConcurrentHashMap<String, Long> mappingLoadedAt = new ConcurrentHashMap<>();
+        private volatile long targetsLoadedAt;
+
+        private boolean targetsExpired(long now) {
+            return targetsLoadedAt <= 0 || now - targetsLoadedAt > TTL_MILLIS;
+        }
+
+        private boolean mappingExpired(String index, long now) {
+            Long loaded = mappingLoadedAt.get(index);
+            return loaded == null || now - loaded > TTL_MILLIS;
+        }
     }
 }

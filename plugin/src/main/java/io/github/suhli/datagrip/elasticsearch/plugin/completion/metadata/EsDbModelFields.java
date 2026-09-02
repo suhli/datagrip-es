@@ -43,11 +43,10 @@ public final class EsDbModelFields {
                     String path = column.getName();
                     if (path == null || path.isBlank()) continue;
                     String type = readEsType(column);
-                    boolean multiField = path.contains(".") && !path.endsWith(".keyword");
                     fields.merge(
                             path,
                             new EsCompletionMetadataSnapshot.FieldInfo(
-                                    path, Set.of(type), Set.of(indexName), multiField),
+                                    path, Set.of(type), Set.of(indexName), false),
                             EsDbModelFields::mergeField);
                 }
             }

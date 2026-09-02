@@ -129,7 +129,15 @@ final class JdbcProxies {
                 case "getHoldability" -> ResultSet.CLOSE_CURSORS_AT_COMMIT;
                 case "setHoldability" -> null;
                 case "setNetworkTimeout" -> {
-                    state.networkTimeout = (int) args[1];
+                    Executor executor = (Executor) args[0];
+                    int timeout = (int) args[1];
+                    if (executor == null) {
+                        throw new SQLException("Connection.setNetworkTimeout executor must not be null", "HY009");
+                    }
+                    if (timeout < 0) {
+                        throw new SQLException("Connection.setNetworkTimeout timeout must be non-negative", "HY092");
+                    }
+                    state.networkTimeout = timeout;
                     state.transport.setNetworkTimeoutMillis(state.networkTimeout);
                     yield null;
                 }
@@ -232,7 +240,14 @@ final class JdbcProxies {
                 case "getMaxRows" -> maxRows;
                 case "setLargeMaxRows" -> { maxRows = Math.toIntExact((long) args[0]); yield null; }
                 case "getLargeMaxRows" -> (long) maxRows;
-                case "setQueryTimeout" -> { queryTimeout = (int) args[0]; yield null; }
+                case "setQueryTimeout" -> {
+                    int seconds = (int) args[0];
+                    if (seconds < 0) {
+                        throw new SQLException("Statement.setQueryTimeout timeout must be non-negative", "HY092");
+                    }
+                    queryTimeout = seconds;
+                    yield null;
+                }
                 case "getQueryTimeout" -> queryTimeout;
                 case "setFetchSize" -> { fetchSize = (int) args[0]; yield null; }
                 case "getFetchSize" -> fetchSize;
@@ -344,8 +359,14 @@ final class JdbcProxies {
                     "HY008");
         }
 
-        private int resolveTimeoutMillis() {
-            if (queryTimeout > 0) return queryTimeout * 1000;
+        private int resolveTimeoutMillis() throws SQLException {
+            if (queryTimeout > 0) {
+                try {
+                    return Math.multiplyExact(queryTimeout, 1000);
+                } catch (ArithmeticException e) {
+                    throw new SQLException("Statement query timeout is too large", "HY092", e);
+                }
+            }
             if (state.networkTimeout > 0) return state.networkTimeout;
             return 0;
         }

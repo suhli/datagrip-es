@@ -81,6 +81,8 @@ public final class EsCompletionSchemaLoader {
                     text(obj, "type"),
                     stringList(obj.get("enumValues")),
                     text(obj, "description"),
+                    text(obj, "minVersion"),
+                    text(obj, "deprecatedVersion"),
                     obj.path("deprecated").asBoolean(false)));
         }
         return result;
