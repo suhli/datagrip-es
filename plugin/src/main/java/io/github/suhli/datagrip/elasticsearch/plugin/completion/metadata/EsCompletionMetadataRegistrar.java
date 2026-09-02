@@ -24,10 +24,10 @@ public final class EsCompletionMetadataRegistrar {
         if (project == null || dataSource == null || !isElasticsearch(dataSource)) return;
         String id = dataSource.getName();
         if (id == null || id.isBlank()) return;
-        if (REGISTERED.putIfAbsent(id, Boolean.TRUE) != null) return;
 
         EsCompletionMetadataService service = EsCompletionMetadataService.getInstance(project);
         if (service.hasProvider(id)) return;
+        if (REGISTERED.putIfAbsent(id, Boolean.TRUE) != null && service.hasProvider(id)) return;
 
         try {
             RawDataSource raw = dataSource.getDelegate();

@@ -105,25 +105,67 @@ public final class EsCompletionMetadataService {
         if (missingFields && !concrete.isEmpty()) {
             scheduleRefresh(datasourceId, concrete);
         }
-        if (concrete.isEmpty()) return snapshot;
-
-        Map<String, EsCompletionMetadataSnapshot.FieldInfo> filtered = new LinkedHashMap<>();
-        for (EsCompletionMetadataSnapshot.FieldInfo field : snapshot.fields().values()) {
-            boolean matches = false;
-            for (String index : concrete) {
-                if (field.indexCoverage().contains(index)) {
-                    matches = true;
-                    break;
-                }
-            }
-            if (matches) filtered.put(field.path(), field);
+        if (concrete.isEmpty()) {
+            return enrichFromModel(snapshot, dataSource, List.of());
         }
+
+        Map<String, EsCompletionMetadataSnapshot.FieldInfo> filtered = filterFields(snapshot, concrete);
+        if (!filtered.isEmpty()) {
+            return copyWithFields(snapshot, filtered);
+        }
+
+        Map<String, EsCompletionMetadataSnapshot.FieldInfo> modelFields =
+                EsDbModelFields.load(dataSource, concrete);
+        if (!modelFields.isEmpty()) {
+            return copyWithFields(snapshot, modelFields);
+        }
+        if (!snapshot.fields().isEmpty()) {
+            return snapshot;
+        }
+        return enrichFromModel(snapshot, dataSource, concrete);
+    }
+
+    private static EsCompletionMetadataSnapshot copyWithFields(
+            EsCompletionMetadataSnapshot snapshot,
+            Map<String, EsCompletionMetadataSnapshot.FieldInfo> fields) {
         return new EsCompletionMetadataSnapshot(
                 snapshot.datasourceId(),
                 snapshot.esVersion(),
                 snapshot.indices(),
-                filtered,
+                fields,
                 snapshot.loadedAtMillis());
+    }
+
+    private static Map<String, EsCompletionMetadataSnapshot.FieldInfo> filterFields(
+            EsCompletionMetadataSnapshot snapshot, List<String> concrete) {
+        Map<String, EsCompletionMetadataSnapshot.FieldInfo> filtered = new LinkedHashMap<>();
+        for (EsCompletionMetadataSnapshot.FieldInfo field : snapshot.fields().values()) {
+            for (String index : concrete) {
+                if (field.indexCoverage().contains(index)) {
+                    filtered.put(field.path(), field);
+                    break;
+                }
+            }
+        }
+        return filtered;
+    }
+
+    private static EsCompletionMetadataSnapshot enrichFromModel(
+            EsCompletionMetadataSnapshot snapshot,
+            DbDataSource dataSource,
+            List<String> indexNames) {
+        if (dataSource == null || !snapshot.fields().isEmpty()) {
+            return snapshot;
+        }
+        List<String> targets = indexNames.isEmpty()
+                ? snapshot.indices().stream().map(EsCompletionMetadataSnapshot.IndexObject::name).limit(1).toList()
+                : indexNames;
+        Map<String, EsCompletionMetadataSnapshot.FieldInfo> modelFields =
+                EsDbModelFields.load(dataSource, targets);
+        if (modelFields.isEmpty()) {
+            return snapshot;
+        }
+        return copyWithFields(snapshot, modelFields);
     }
 
     public void putSnapshot(EsCompletionMetadataSnapshot stored) {

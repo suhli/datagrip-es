@@ -2,12 +2,14 @@ package io.github.suhli.datagrip.elasticsearch.plugin.completion;
 
 import io.github.suhli.datagrip.elasticsearch.plugin.completion.metadata.EsCompletionMetadataService;
 import io.github.suhli.datagrip.elasticsearch.plugin.completion.metadata.EsCompletionMetadataSnapshot;
+import io.github.suhli.datagrip.elasticsearch.plugin.completion.metadata.EsCompletionMetadataRegistrar;
 import io.github.suhli.datagrip.elasticsearch.plugin.completion.model.EsCaretLocation;
 import io.github.suhli.datagrip.elasticsearch.plugin.completion.model.EsCompletionContext;
 import io.github.suhli.datagrip.elasticsearch.plugin.completion.model.EsExpectedKind;
 import io.github.suhli.datagrip.elasticsearch.plugin.completion.schema.EsCompletionSchema;
 import io.github.suhli.datagrip.elasticsearch.plugin.completion.schema.EsCompletionSchemaLoader;
 import io.github.suhli.datagrip.elasticsearch.plugin.completion.schema.EsSchemaModels;
+import io.github.suhli.datagrip.elasticsearch.plugin.language.EsRestFileDetector;
 import io.github.suhli.datagrip.elasticsearch.plugin.language.EsRestLanguage;
 
 import com.intellij.codeInsight.completion.CompletionContributor;
@@ -16,10 +18,10 @@ import com.intellij.codeInsight.completion.CompletionProvider;
 import com.intellij.codeInsight.completion.CompletionResultSet;
 import com.intellij.codeInsight.completion.CompletionType;
 import com.intellij.codeInsight.lookup.LookupElement;
-import com.intellij.codeInsight.completion.CompletionParameters;
 import com.intellij.database.psi.DbDataSource;
 import com.intellij.openapi.project.Project;
 import com.intellij.patterns.PlatformPatterns;
+import com.intellij.patterns.PatternCondition;
 import com.intellij.psi.PsiFile;
 import com.intellij.util.ProcessingContext;
 import org.jetbrains.annotations.NotNull;
@@ -33,25 +35,41 @@ import java.util.function.Consumer;
 
 public final class EsRestCompletionContributor extends CompletionContributor {
     public EsRestCompletionContributor() {
+        CompletionProvider<CompletionParameters> provider = new CompletionProvider<>() {
+            @Override
+            protected void addCompletions(
+                    @NotNull CompletionParameters parameters,
+                    @NotNull ProcessingContext context,
+                    @NotNull CompletionResultSet result) {
+                fill(parameters, result);
+            }
+        };
         extend(CompletionType.BASIC,
-                PlatformPatterns.psiElement().withLanguage(EsRestLanguage.INSTANCE),
-                new CompletionProvider<>() {
-                    @Override
-                    protected void addCompletions(
-                            @NotNull CompletionParameters parameters,
-                            @NotNull ProcessingContext context,
-                            @NotNull CompletionResultSet result) {
-                        fill(parameters, result);
-                    }
-                });
+                PlatformPatterns.psiElement().inFile(PlatformPatterns.psiFile().with(
+                        new PatternCondition<>("esRestConsoleFile") {
+                            @Override
+                            public boolean accepts(@NotNull PsiFile file, ProcessingContext context) {
+                                return file.getLanguage().isKindOf(EsRestLanguage.INSTANCE)
+                                        || EsRestFileDetector.isEsRestFile(file);
+                            }
+                        })),
+                provider);
     }
 
     static void fill(CompletionParameters parameters, CompletionResultSet result) {
         PsiFile file = parameters.getOriginalFile();
+        if (!file.getLanguage().isKindOf(EsRestLanguage.INSTANCE)
+                && !EsRestFileDetector.isEsRestFile(file)) {
+            return;
+        }
         Project project = file.getProject();
         EsCompletionSchema schema = EsCompletionSchemaLoader.get();
-        String datasourceId = EsCompletionDataSourceUtil.resolveDatasourceId(parameters);
         DbDataSource dataSource = EsCompletionDataSourceUtil.findDataSource(parameters);
+        if (dataSource != null) {
+            EsCompletionDataSourceUtil.bindDataSource(file, dataSource);
+            EsCompletionMetadataRegistrar.ensureRegistered(project, dataSource);
+        }
+        String datasourceId = EsCompletionDataSourceUtil.resolveDatasourceId(parameters);
         String version = EsCompletionDataSourceUtil.resolveVersion(parameters);
         EsCompletionContextResolver resolver = new EsCompletionContextResolver(schema);
         EsCompletionContext ctx = resolver.resolve(

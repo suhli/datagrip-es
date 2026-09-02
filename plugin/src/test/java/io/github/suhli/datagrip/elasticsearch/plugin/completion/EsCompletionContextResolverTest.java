@@ -77,6 +77,39 @@ class EsCompletionContextResolverTest {
     private final EsCompletionSchema schema = sampleSchema();
 
     @Test
+    void resolvesTermFieldKeyInFilterArray() {
+        String text = """
+                GET /c1-0-client-plog-2026-08-21-2026.08.21/_search
+                {
+                  "query": {
+                    "bool": {
+                      "filter": [
+                        {
+                          "term": {
+                            \"""";
+        var ctx = new EsCompletionContextResolver(schema).resolve(text, text.length(), "", "");
+        assertEquals(EsExpectedKind.FIELD_KEY, ctx.expectedKind());
+        assertEquals("term", ctx.parentProperty());
+        assertTrue(ctx.insideString());
+    }
+
+    @Test
+    void resolvesTermEmptyKeyPairInFilterArray() {
+        String text = """
+                GET /c1-0-client-plog-2026-08-21-2026.08.21/_search
+                {
+                  "query": {
+                    "bool": {
+                      "filter": [
+                        {
+                          "term": {
+                            "": \"""";
+        var ctx = new EsCompletionContextResolver(schema).resolve(text, text.length(), "", "");
+        assertEquals(EsExpectedKind.FIELD_KEY, ctx.expectedKind());
+        assertEquals("term", ctx.parentProperty());
+    }
+
+    @Test
     void resolvesHttpMethodPrefix() {
         String text = "G";
         var ctx = new EsCompletionContextResolver(schema).resolve(text, text.length(), "", "");
