@@ -60,8 +60,7 @@
             language="ElasticsearchREST"
             implementationClass="io.github.suhli.datagrip.elasticsearch.plugin.completion.EsRestCompletionContributor"/>
         <database.driversConfig config="databaseDrivers/elasticsearch-rest.xml"/>
-        <postStartupActivity
-            implementation="io.github.suhli.datagrip.elasticsearch.plugin.BundledDriverStartupActivity"/>
+        <database.artifactsConfig config="databaseDrivers/elasticsearch-rest-artifacts.xml"/>
         <postStartupActivity
             implementation="io.github.suhli.datagrip.elasticsearch.plugin.language.EsRestEditorActionRegistrar"/>
     </extensions>
