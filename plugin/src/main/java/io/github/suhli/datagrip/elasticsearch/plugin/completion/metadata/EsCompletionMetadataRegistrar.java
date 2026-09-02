@@ -8,6 +8,7 @@ import com.intellij.database.access.DatabaseCredentials;
 import com.intellij.database.dataSource.LocalDataSource;
 import com.intellij.database.dataSource.LocalDataSourceManager;
 import com.intellij.database.psi.DbDataSource;
+import com.intellij.openapi.application.ApplicationManager;
 import com.intellij.openapi.diagnostic.Logger;
 import com.intellij.openapi.project.Project;
 
@@ -16,10 +17,13 @@ import java.security.MessageDigest;
 import java.util.Base64;
 import java.util.Comparator;
 import java.util.Properties;
+import java.util.Set;
+import java.util.concurrent.ConcurrentHashMap;
 
 /** Registers transport-backed metadata providers for Elasticsearch datasources. */
 public final class EsCompletionMetadataRegistrar {
     private static final Logger LOG = Logger.getInstance(EsCompletionMetadataRegistrar.class);
+    private static final Set<RegistrationKey> REGISTERING = ConcurrentHashMap.newKeySet();
 
     private EsCompletionMetadataRegistrar() {}
 
@@ -27,14 +31,32 @@ public final class EsCompletionMetadataRegistrar {
         if (project == null || dataSource == null || !isElasticsearch(dataSource)) return;
         String id = datasourceId(dataSource);
         if (id == null || id.isBlank()) return;
+        EsCompletionMetadataService service = EsCompletionMetadataService.getInstance(project);
+        if (service.hasProvider(id)) return;
 
+        RegistrationKey key = new RegistrationKey(project, id);
+        if (!REGISTERING.add(key)) return;
+        ApplicationManager.getApplication().executeOnPooledThread(() -> {
+            try {
+                registerInBackground(project, dataSource, id, service);
+            } finally {
+                REGISTERING.remove(key);
+            }
+        });
+    }
+
+    private static void registerInBackground(
+            Project project,
+            DbDataSource dataSource,
+            String id,
+            EsCompletionMetadataService service) {
+        if (project.isDisposed()) return;
         try {
             String url = dataSource.getConnectionConfig().getUrl();
             if (url == null || !url.startsWith(EsJdbcUrl.PREFIX)) return;
             Properties props = effectiveConnectionProperties(project, dataSource);
             EsJdbcUrl config = EsJdbcUrl.parse(url, props);
             String fingerprint = fingerprint(url, config.properties());
-            EsCompletionMetadataService service = EsCompletionMetadataService.getInstance(project);
             if (service.hasProvider(id, fingerprint)) return;
             HttpTransport transport = new HttpTransport(config);
             EsTransportMetadataProvider provider =
@@ -112,4 +134,6 @@ public final class EsCompletionMetadataRegistrar {
         }
         return false;
     }
+
+    private record RegistrationKey(Project project, String datasourceId) {}
 }
