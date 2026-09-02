@@ -21,6 +21,10 @@ class BundledDriverConfigurationTest {
 
         var artifact = artifacts.getElementsByTagName("artifact").item(0).getAttributes();
         assertEquals("elasticsearch.rest.bundled", artifact.getNamedItem("id").getNodeValue());
+        assertEquals(
+                "0.1.0",
+                artifacts.getElementsByTagName("version").item(0)
+                        .getAttributes().getNamedItem("version").getNodeValue());
         String url = artifacts.getElementsByTagName("item").item(0)
                 .getAttributes().getNamedItem("url").getNodeValue();
         assertEquals(
