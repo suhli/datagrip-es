@@ -66,7 +66,7 @@ public final class EsRestEvaluationHelper extends EvaluationHelperBase {
 
         Condition<V> executable = Conditions.or(
                 isStatement(traverser.api),
-                ScriptModelUtilCore.wholeFileCondition(
+                EsRestScriptModelCompat.wholeFileCondition(
                         traverser,
                         range,
                         isWsOrComment(traverser.api),
