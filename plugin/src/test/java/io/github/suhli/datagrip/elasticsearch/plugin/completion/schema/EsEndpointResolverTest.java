@@ -32,6 +32,16 @@ class EsEndpointResolverTest {
         assertNull(schema.resolveEndpoint("POST", "/foo/_settings"));
     }
 
+    @Test
+    void partialFallbackRemainsMethodAwareAndRejectsAmbiguity() {
+        assertEquals("get-settings",
+                schema.findEndpointByPartialPath("GET", "/foo/_sett", "_sett").name());
+        assertEquals("put-settings",
+                schema.findEndpointByPartialPath("PUT", "/foo/_sett", "_sett").name());
+        assertNull(schema.findEndpointByPartialPath("POST", "/foo/_sett", "_sett"));
+        assertNull(schema.findEndpointByPartialPath("", "/foo/_sett", "_sett"));
+    }
+
     private static EsSchemaModels.Endpoint endpoint(String name, String method, String path) {
         return new EsSchemaModels.Endpoint(
                 name, List.of(method), List.of(path), List.of(), null,

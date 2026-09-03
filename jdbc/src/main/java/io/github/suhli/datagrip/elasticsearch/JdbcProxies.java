@@ -362,6 +362,12 @@ final class JdbcProxies {
                 if (cancellation.isCancelled()) {
                     throw cancelledException(request);
                 }
+                if (e instanceof HttpTransport.ResponseTooLargeException tooLarge) {
+                    throw new SQLDataException(
+                            "Elasticsearch response exceeds configured maximum of "
+                                    + tooLarge.limit() + " bytes",
+                            "22000", tooLarge);
+                }
                 SQLTimeoutException timeout = asTimeout(e, request, timeoutMillis);
                 if (timeout != null) throw timeout;
                 throw new SQLException("Elasticsearch request failed", "08S01", e);

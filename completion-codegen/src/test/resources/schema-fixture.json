@@ -82,7 +82,10 @@
         { "name": "from", "type": { "kind": "instance_of", "type": { "namespace": "_builtins", "name": "integer" } } },
         { "name": "sort", "type": { "kind": "instance_of", "type": { "namespace": "_types", "name": "Sort" } } },
         { "name": "_source", "type": { "kind": "instance_of", "type": { "namespace": "_types", "name": "SourceConfig" } } },
-        { "name": "track_total_hits", "type": { "kind": "instance_of", "type": { "namespace": "_builtins", "name": "boolean" } } }
+        { "name": "track_total_hits", "type": { "kind": "union_of", "items": [
+          { "kind": "instance_of", "type": { "namespace": "_builtins", "name": "boolean" } },
+          { "kind": "instance_of", "type": { "namespace": "_builtins", "name": "integer" } }
+        ] } }
       ]
     },
     {

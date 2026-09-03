@@ -13,20 +13,32 @@ public final class EsCompletionSchema {
     private final List<EsSchemaModels.Endpoint> endpoints;
     private final Map<String, EsSchemaModels.DslNode> keys;
     private final Map<String, List<String>> endpointBodyRoots;
-    private final Map<String, EsSchemaModels.Endpoint> endpointsByAction;
+    private final Map<String, Map<String, EsSchemaModels.GenericProperty>> requestBodySchemas;
+    private final Map<String, Map<String, EsSchemaModels.GenericProperty>> typeSchemas;
 
     public EsCompletionSchema(
             List<EsSchemaModels.Endpoint> endpoints,
             Map<String, EsSchemaModels.DslNode> keys,
             Map<String, List<String>> endpointBodyRoots) {
+        this(endpoints, keys, endpointBodyRoots, Map.of(), Map.of());
+    }
+
+    public EsCompletionSchema(
+            List<EsSchemaModels.Endpoint> endpoints,
+            Map<String, EsSchemaModels.DslNode> keys,
+            Map<String, List<String>> endpointBodyRoots,
+            Map<String, Map<String, EsSchemaModels.GenericProperty>> requestBodySchemas,
+            Map<String, Map<String, EsSchemaModels.GenericProperty>> typeSchemas) {
         this.endpoints = List.copyOf(endpoints);
         this.keys = Map.copyOf(keys);
         this.endpointBodyRoots = Map.copyOf(endpointBodyRoots);
-        Map<String, EsSchemaModels.Endpoint> byAction = new LinkedHashMap<>();
-        for (EsSchemaModels.Endpoint endpoint : this.endpoints) {
-            byAction.put(endpoint.name(), endpoint);
-        }
-        this.endpointsByAction = Map.copyOf(byAction);
+        Map<String, Map<String, EsSchemaModels.GenericProperty>> scoped = new LinkedHashMap<>();
+        requestBodySchemas.forEach((requestType, nodes) ->
+                scoped.put(requestType, Map.copyOf(nodes)));
+        this.requestBodySchemas = Map.copyOf(scoped);
+        Map<String, Map<String, EsSchemaModels.GenericProperty>> reusable = new LinkedHashMap<>();
+        typeSchemas.forEach((type, nodes) -> reusable.put(type, Map.copyOf(nodes)));
+        this.typeSchemas = Map.copyOf(reusable);
     }
 
     public List<EsSchemaModels.Endpoint> endpoints() {
@@ -48,6 +60,88 @@ public final class EsCompletionSchema {
         if (direct != null) return direct;
         return keys.get(property);
     }
+
+    public EsSchemaModels.DslNode findRequestNode(String requestType, String jsonPath) {
+        if (requestType == null || requestType.isBlank() || jsonPath == null || jsonPath.isBlank()) return null;
+        Navigation navigation = navigate(requestType, jsonPath);
+        return navigation == null ? null : navigation.property().node();
+    }
+
+    public boolean isSharedQueryDslNode(String requestType, String jsonPath) {
+        Navigation navigation = navigate(requestType, jsonPath);
+        if (navigation == null) return false;
+        return navigation.property().childTypes().stream()
+                .anyMatch(type -> type.endsWith(".query_dsl.QueryContainer")
+                        || type.equals("QueryContainer"));
+    }
+
+    public List<EsSchemaModels.DslNode> requestChildren(String requestType, String parentPath) {
+        String parent = normalizeJsonPath(parentPath);
+        if (parent.isBlank()) {
+            Map<String, EsSchemaModels.GenericProperty> roots = requestBodySchemas.get(requestType);
+            return roots == null ? List.of()
+                    : roots.values().stream().map(EsSchemaModels.GenericProperty::node).toList();
+        }
+        Navigation navigation = navigate(requestType, parent);
+        if (navigation == null) return List.of();
+        EsSchemaModels.GenericProperty property = navigation.property();
+        List<String> childTypes;
+        if (navigation.dictionaryValueContext()) {
+            childTypes = property.dictionaryValueTypes();
+        } else if (!property.dictionaryValueTypes().isEmpty()) {
+            // At the dictionary itself keys are user-defined, not fixed properties.
+            return List.of();
+        } else {
+            childTypes = property.childTypes();
+        }
+        LinkedHashMap<String, EsSchemaModels.DslNode> result = new LinkedHashMap<>();
+        for (String type : childTypes) {
+            Map<String, EsSchemaModels.GenericProperty> children = typeSchemas.get(type);
+            if (children == null) continue;
+            children.forEach((name, child) -> result.putIfAbsent(name, child.node()));
+        }
+        return List.copyOf(result.values());
+    }
+
+    private static String normalizeJsonPath(String path) {
+        return path == null ? "" : path.replace("[]", "").replaceAll("^\\.+|\\.+$", "");
+    }
+
+    private Navigation navigate(String requestType, String path) {
+        Map<String, EsSchemaModels.GenericProperty> roots = requestBodySchemas.get(requestType);
+        if (roots == null) return null;
+        String normalized = normalizeJsonPath(path);
+        if (normalized.isBlank()) return null;
+        String[] segments = normalized.split("\\.");
+        EsSchemaModels.GenericProperty current = roots.get(segments[0]);
+        if (current == null) return null;
+        boolean dictionaryValue = false;
+        for (int i = 1; i < segments.length; i++) {
+            List<String> candidates;
+            if (!current.dictionaryValueTypes().isEmpty() && !dictionaryValue) {
+                // The current segment is an arbitrary map key.
+                dictionaryValue = true;
+                continue;
+            }
+            candidates = dictionaryValue ? current.dictionaryValueTypes() : current.childTypes();
+            current = findTypeProperty(candidates, segments[i]);
+            if (current == null) return null;
+            dictionaryValue = false;
+        }
+        return new Navigation(current, dictionaryValue);
+    }
+
+    private EsSchemaModels.GenericProperty findTypeProperty(List<String> types, String name) {
+        for (String type : types) {
+            Map<String, EsSchemaModels.GenericProperty> properties = typeSchemas.get(type);
+            if (properties != null && properties.containsKey(name)) return properties.get(name);
+        }
+        return null;
+    }
+
+    private record Navigation(
+            EsSchemaModels.GenericProperty property,
+            boolean dictionaryValueContext) {}
 
     public List<EsSchemaModels.DslNode> childrenOf(String parentContext) {
         List<EsSchemaModels.DslNode> result = new ArrayList<>();
@@ -115,18 +209,28 @@ public final class EsCompletionSchema {
         return result;
     }
 
-    public EsSchemaModels.Endpoint findEndpointByPath(String endpointPath) {
-        if (endpointPath == null || endpointPath.isBlank()) return null;
+    /**
+     * Method-aware fallback for an incomplete URL. Ambiguous candidates deliberately
+     * produce no schema rather than selecting the first endpoint.
+     */
+    public EsSchemaModels.Endpoint findEndpointByPartialPath(
+            String method, String fullRequestPath, String actionablePath) {
+        String methodUpper = method == null ? "" : method.toUpperCase(Locale.ROOT);
+        LinkedHashMap<String, EsSchemaModels.Endpoint> candidates = new LinkedHashMap<>();
         for (EsSchemaModels.Endpoint endpoint : endpoints) {
-            for (String path : endpoint.paths()) {
-                if (actionableEndpoint(path).equals(endpointPath)
-                        || path.endsWith("/" + endpointPath)
-                        || path.equals("/" + endpointPath)) {
-                    return endpoint;
+            if (!methodUpper.isBlank() && !endpoint.methods().isEmpty()
+                    && !endpoint.methods().contains(methodUpper)) {
+                continue;
+            }
+            for (String template : endpoint.paths()) {
+                if (matchesPartialTemplate(template, fullRequestPath)
+                        || matchesActionablePartial(actionableEndpoint(template), actionablePath)) {
+                    candidates.put(endpoint.name(), endpoint);
+                    break;
                 }
             }
         }
-        return endpointsByAction.get(endpointPath);
+        return candidates.size() == 1 ? candidates.values().iterator().next() : null;
     }
 
     public ResolvedEndpoint resolveEndpoint(String method, String fullRequestPath) {
@@ -169,6 +273,32 @@ public final class EsCompletionSchema {
             }
         }
         return Map.copyOf(parameters);
+    }
+
+    private static boolean matchesPartialTemplate(String template, String actualPath) {
+        if (actualPath == null || actualPath.isBlank()) return false;
+        String clean = actualPath.split("\\?", 2)[0];
+        List<String> expected = segments(template);
+        List<String> actual = segments(clean);
+        if (actual.isEmpty() || actual.size() > expected.size()) return false;
+        for (int i = 0; i < actual.size(); i++) {
+            String expectedSegment = expected.get(i);
+            if (isParameter(expectedSegment)) continue;
+            String actualSegment = actual.get(i);
+            boolean last = i == actual.size() - 1;
+            if (last) {
+                if (!expectedSegment.startsWith(actualSegment)) return false;
+            } else if (!expectedSegment.equals(actualSegment)) {
+                return false;
+            }
+        }
+        return true;
+    }
+
+    private static boolean matchesActionablePartial(String expected, String actual) {
+        if (actual == null || actual.isBlank()) return false;
+        String normalized = actual.replaceFirst("^/+", "");
+        return expected.equals(normalized) || expected.startsWith(normalized);
     }
 
     private static List<String> segments(String path) {

@@ -19,16 +19,16 @@ jobs:
           java-version: 21
 
       - name: Gradle Wrapper Validation
-        uses: gradle/actions/wrapper-validation@v4
+        uses: gradle/actions/wrapper-validation@v6
 
       - name: Setup Gradle
-        uses: gradle/actions/setup-gradle@v4
+        uses: gradle/actions/setup-gradle@v6
 
       - name: Test, Plugin Verifier, Build
         run: ./gradlew test verifyPlugin buildPlugin --no-configuration-cache --console=plain
 
       - name: Upload plugin artifact
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: plugin-distribution
           path: plugin/build/distributions/*

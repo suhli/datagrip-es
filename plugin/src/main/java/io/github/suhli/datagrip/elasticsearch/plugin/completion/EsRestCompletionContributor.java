@@ -179,7 +179,10 @@ public final class EsRestCompletionContributor extends CompletionContributor {
             }
         } else {
             String leaf = leaf(ctx.jsonPath());
-            EsSchemaModels.DslNode node = schema.findProperty(ctx.parentProperty(), leaf);
+            EsSchemaModels.Endpoint endpoint = resolveEndpoint(schema, ctx);
+            EsSchemaModels.DslNode node = endpoint == null ? null
+                    : schema.findRequestNode(endpoint.requestBodyType(), ctx.jsonPath());
+            if (node == null) node = schema.findProperty(ctx.parentProperty(), leaf);
             if (EsSchemaAvailability.isAvailable(node, ctx.esVersion())) values.addAll(node.enumValues());
             if (values.isEmpty() && "operator".equals(leaf)) {
                 values.addAll(List.of("and", "or"));
@@ -202,7 +205,9 @@ public final class EsRestCompletionContributor extends CompletionContributor {
             String endpointKey = endpoint == null ? endpointKey(ctx) : endpoint.name();
             for (String key : schema.bodyRootsForEndpoint(endpointKey)) {
                 if (!seen.add(key)) continue;
-                EsSchemaModels.DslNode node = schema.findKey(key);
+                EsSchemaModels.DslNode node = endpoint == null ? null
+                        : schema.findRequestNode(endpoint.requestBodyType(), key);
+                if (node == null) node = schema.findKey(key);
                 if (node == null) {
                     sink.accept(EsLookupFactory.dslKey(new EsSchemaModels.DslNode(
                             key, "search_body", List.of("search"), List.of(), "object", false,
@@ -222,6 +227,18 @@ public final class EsRestCompletionContributor extends CompletionContributor {
                 }
             }
             return;
+        }
+        EsSchemaModels.Endpoint endpoint = resolveEndpoint(schema, ctx);
+        if (endpoint != null && endpoint.requestBodyType() != null) {
+            List<EsSchemaModels.DslNode> scoped =
+                    schema.requestChildren(endpoint.requestBodyType(), ctx.jsonPath());
+            if (!scoped.isEmpty()) {
+                for (EsSchemaModels.DslNode node : scoped) {
+                    if (!EsSchemaAvailability.isAvailable(node, ctx.esVersion())) continue;
+                    sink.accept(EsLookupFactory.dslKey(node, ctx));
+                }
+                return;
+            }
         }
         String parent = ctx.parentProperty();
         EsSchemaModels.DslNode parentNode = schema.findKey(parent);
@@ -276,28 +293,30 @@ public final class EsRestCompletionContributor extends CompletionContributor {
             EsCompletionMetadataSnapshot snapshot,
             EsCompletionContext ctx) {
         String prefix = ctx.prefix() == null ? "" : ctx.prefix().toLowerCase(Locale.ROOT);
+        String partialDescription = partialFieldsDescription(snapshot);
         for (EsCompletionMetadataSnapshot.FieldInfo field : snapshot.fields().values()) {
             if (!prefix.isEmpty() && !field.path().toLowerCase(Locale.ROOT).startsWith(prefix)
                     && !field.path().toLowerCase(Locale.ROOT).contains(prefix)) {
                 continue;
             }
-            sink.accept(EsLookupFactory.field(field, ctx));
+            sink.accept(EsLookupFactory.field(field, ctx, partialDescription));
         }
+    }
+
+    static String partialFieldsDescription(EsCompletionMetadataSnapshot snapshot) {
+        if (!snapshot.fieldsPartial()) return null;
+        return "Mapping fields are partial (%d/%d targets)".formatted(
+                snapshot.loadedTargetCount(), snapshot.matchedTargetCount());
     }
 
     private static EsSchemaModels.Endpoint resolveEndpoint(EsCompletionSchema schema, EsCompletionContext ctx) {
         EsCompletionSchema.ResolvedEndpoint resolved = schema.resolveEndpoint(ctx.method(), ctx.path());
         EsSchemaModels.Endpoint endpoint = resolved == null ? null : resolved.endpoint();
-        if (endpoint == null) endpoint = schema.findEndpointByPath(ctx.endpoint());
+        if (endpoint == null) {
+            endpoint = schema.findEndpointByPartialPath(ctx.method(), ctx.path(), ctx.endpoint());
+        }
         if (endpoint == null && ctx.path().contains("_search")) {
-            endpoint = schema.findEndpointByPath("_search");
-            if (endpoint == null) {
-                for (EsSchemaModels.Endpoint candidate : schema.endpoints()) {
-                    if ("search".equals(candidate.name())) {
-                        return candidate;
-                    }
-                }
-            }
+            endpoint = schema.findEndpointByPartialPath(ctx.method(), ctx.path(), "_search");
         }
         return endpoint;
     }

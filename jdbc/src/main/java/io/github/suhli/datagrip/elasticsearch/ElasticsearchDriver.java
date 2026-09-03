@@ -39,6 +39,8 @@ public final class ElasticsearchDriver implements Driver {
                 property("pathPrefix", false, "Reverse-proxy path prefix"),
                 property("connectTimeout", false, "Connect timeout in milliseconds"),
                 property("requestTimeout", false, "Request timeout in milliseconds"),
+                property("maxResponseBytes", false,
+                        "Maximum decompressed HTTP response size in bytes (0 means unlimited; default 67108864)"),
                 property("headers", false, "Additional semicolon-separated HTTP headers")
         };
     }

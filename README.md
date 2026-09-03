@@ -47,6 +47,8 @@ Connection properties override URL query parameters:
 - `pathPrefix`: reverse-proxy prefix such as `/elasticsearch`.
 - `connectTimeout`: connection timeout in milliseconds.
 - `requestTimeout`: request timeout in milliseconds.
+- `maxResponseBytes`: maximum decompressed HTTP response size in bytes
+  (`67108864`, or 64 MiB, by default; `0` disables the limit).
 - `auth`: `none`, `basic`, or `apiKey`.
 - `user` / `password`: Basic credentials.
 - `apiKey`: API Key value for standalone JDBC callers.
@@ -105,8 +107,13 @@ Search hits become rows containing `_index`, `_id`, `_score`, and flattened
 also tabularized. Every non-empty result includes a `_response` column; the
 complete payload is stored on its first row only (and oversized payloads are
 replaced by a size marker), avoiding a large copy on every hit. Thus search
-responses containing hits and aggregations retain their aggregation and
-response metadata, while `size: 0` aggregation searches remain viewable. Elasticsearch
+responses containing hits and aggregations also expose the complete structured
+aggregation object in `_aggregations` on the first row only. This remains
+available even when `_response` is replaced by its size marker. Plain,
+successful empty searches return zero rows, while empty searches carrying
+meaningful sections such as suggestions, profiles, PIT IDs, timeouts, or shard
+failures retain their raw response. `size: 0` aggregation searches remain
+viewable. Elasticsearch
 REST Console files use the `.esrest` extension and support method/path/JSON
 syntax highlighting and IDE code formatting.
 

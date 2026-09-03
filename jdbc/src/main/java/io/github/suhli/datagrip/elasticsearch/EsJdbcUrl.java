@@ -13,19 +13,22 @@ import java.util.Properties;
 /** Parsed JDBC endpoint and connection options. */
 public final class EsJdbcUrl {
     public static final String PREFIX = "jdbc:es-rest:";
+    public static final long DEFAULT_MAX_RESPONSE_BYTES = 64L * 1024 * 1024;
 
     private final URI endpoint;
     private final boolean verifyTls;
     private final Duration connectTimeout;
     private final Duration responseTimeout;
+    private final long maxResponseBytes;
     private final Properties properties;
 
     private EsJdbcUrl(URI endpoint, boolean verifyTls, Duration connectTimeout,
-                      Duration responseTimeout, Properties properties) {
+                      Duration responseTimeout, long maxResponseBytes, Properties properties) {
         this.endpoint = endpoint;
         this.verifyTls = verifyTls;
         this.connectTimeout = connectTimeout;
         this.responseTimeout = responseTimeout;
+        this.maxResponseBytes = maxResponseBytes;
         this.properties = properties;
     }
 
@@ -77,7 +80,10 @@ public final class EsJdbcUrl {
             values.forEach(options::setProperty);
             return new EsJdbcUrl(endpoint, verifyTls,
                     timeout(values, "connectTimeout", "connectTimeoutMs", 10_000),
-                    timeout(values, "responseTimeout", "socketTimeout", 60_000), options);
+                    timeout(values, "responseTimeout", "socketTimeout", 60_000),
+                    nonNegativeLong(values, "maxResponseBytes", DEFAULT_MAX_RESPONSE_BYTES), options);
+        } catch (SQLException e) {
+            throw e;
         } catch (Exception e) {
             throw new SQLException("Invalid endpoint in JDBC URL", "08001", e);
         }
@@ -134,6 +140,19 @@ public final class EsJdbcUrl {
         }
     }
 
+    private static long nonNegativeLong(Map<String, String> values, String key, long fallback)
+            throws SQLException {
+        String value = values.get(key);
+        if (value == null) return fallback;
+        try {
+            long parsed = Long.parseLong(value);
+            if (parsed < 0) throw new NumberFormatException();
+            return parsed;
+        } catch (NumberFormatException e) {
+            throw new SQLException(key + " must be a non-negative byte value", "08001", e);
+        }
+    }
+
     private static String trimSlashes(String path) {
         int start = 0, end = path.length();
         while (start < end && path.charAt(start) == '/') start++;
@@ -145,6 +164,7 @@ public final class EsJdbcUrl {
     public boolean verifyTls() { return verifyTls; }
     public Duration connectTimeout() { return connectTimeout; }
     public Duration responseTimeout() { return responseTimeout; }
+    public long maxResponseBytes() { return maxResponseBytes; }
     public String property(String name) { return properties.getProperty(name); }
     public Properties properties() {
         Properties copy = new Properties();

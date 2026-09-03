@@ -39,4 +39,9 @@ public final class EsSchemaModels {
             String deprecatedVersion,
             boolean deprecated,
             int priority) {}
+
+    public record GenericProperty(
+            DslNode node,
+            List<String> childTypes,
+            List<String> dictionaryValueTypes) {}
 }

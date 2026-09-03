@@ -42,7 +42,10 @@ public final class EsCompletionSchemaLoader {
              InputStream dslIn = resource(DSL_RESOURCE)) {
             JsonNode api = JSON.readTree(apiIn);
             JsonNode dsl = JSON.readTree(dslIn);
-            return new EsCompletionSchema(parseEndpoints(api), parseKeys(dsl), parseRoots(dsl));
+            return new EsCompletionSchema(
+                    parseEndpoints(api), parseKeys(dsl), parseRoots(dsl),
+                    parseGenericSchemas(dsl.path("requestBodySchemas")),
+                    parseGenericSchemas(dsl.path("typeSchemas")));
         } catch (Exception e) {
             LOG.warn("Failed to load Elasticsearch completion schema; using empty schema", e);
             return new EsCompletionSchema(List.of(), Map.of(), Map.of());
@@ -119,6 +122,42 @@ public final class EsCompletionSchemaLoader {
         roots.fieldNames().forEachRemaining(fieldName ->
                 result.put(fieldName, stringList(roots.get(fieldName))));
         return result;
+    }
+
+    private static Map<String, Map<String, EsSchemaModels.GenericProperty>> parseGenericSchemas(
+            JsonNode schemas) {
+        Map<String, Map<String, EsSchemaModels.GenericProperty>> result = new LinkedHashMap<>();
+        if (!schemas.isObject()) return result;
+        schemas.fieldNames().forEachRemaining(type -> {
+            Map<String, EsSchemaModels.GenericProperty> nodes = new LinkedHashMap<>();
+            JsonNode schema = schemas.path(type);
+            schema.fieldNames().forEachRemaining(name -> {
+                JsonNode property = schema.path(name);
+                nodes.put(name, new EsSchemaModels.GenericProperty(
+                        parseDslNode(property.path("node"), name),
+                        stringList(property.get("childTypes")),
+                        stringList(property.get("dictionaryValueTypes"))));
+            });
+            result.put(type, Map.copyOf(nodes));
+        });
+        return result;
+    }
+
+    private static EsSchemaModels.DslNode parseDslNode(JsonNode obj, String fallbackKey) {
+        return new EsSchemaModels.DslNode(
+                text(obj, "key").isEmpty() ? fallbackKey : text(obj, "key"),
+                text(obj, "category"),
+                stringList(obj.get("parents")),
+                stringList(obj.get("children")),
+                text(obj, "valueType"),
+                obj.path("fieldReference").asBoolean(false),
+                stringList(obj.get("enumValues")),
+                text(obj, "snippet"),
+                text(obj, "description"),
+                text(obj, "minVersion"),
+                text(obj, "deprecatedVersion"),
+                obj.path("deprecated").asBoolean(false),
+                obj.path("priority").asInt(50));
     }
 
     private static List<String> stringList(JsonNode node) {

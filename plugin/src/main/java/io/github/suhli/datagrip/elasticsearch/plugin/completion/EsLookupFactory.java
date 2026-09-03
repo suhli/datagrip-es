@@ -94,12 +94,24 @@ public final class EsLookupFactory {
         return PrioritizedLookupElement.withPriority(builder, priority);
     }
 
-    public static LookupElement field(EsCompletionMetadataSnapshot.FieldInfo field, EsCompletionContext context) {
+    public static LookupElement field(
+            EsCompletionMetadataSnapshot.FieldInfo field,
+            EsCompletionContext context) {
+        return field(field, context, null);
+    }
+
+    public static LookupElement field(
+            EsCompletionMetadataSnapshot.FieldInfo field,
+            EsCompletionContext context,
+            String partialDescription) {
         String type = field.primaryType();
         String typeText = type + (field.multiField() ? " · multi-field" : "");
         boolean asKey = context.expectedKind() == EsExpectedKind.FIELD_KEY;
         LookupElementBuilder builder = LookupElementBuilder.create(field.path())
                 .withTypeText(typeText, true);
+        if (partialDescription != null && !partialDescription.isBlank()) {
+            builder = builder.withTailText(" · " + partialDescription, true);
+        }
         if (asKey) {
             if (EsCompletionContextResolver.isEmptyFieldKeyPlaceholder(context)) {
                 builder = builder.withInsertHandler(EsSnippetInsertHandler.forEmptyFieldKeyPair(field.path()));

@@ -30,21 +30,25 @@ public final class JsonResultMapper {
         if (root.isObject() && root.has("hits") && root.path("hits").isObject()) {
             JsonNode hits = root.path("hits").path("hits");
             if (hits.isArray()) {
+                JsonNode aggregationNode = root.path("aggregations");
                 List<Map<String, Object>> records = searchHits(hits);
                 if (!records.isEmpty()) {
-                    return structuredWithRaw(tabular(records), json);
+                    return structuredWithRaw(tabular(records), json, aggregationNode);
                 }
                 List<Map<String, Object>> aggregations = new ArrayList<>();
-                collectBuckets("", root.path("aggregations"), aggregations);
-                if (aggregations.isEmpty() && root.path("aggregations").isObject()
-                        && !root.path("aggregations").isEmpty()) {
-                    addRecord(aggregations, flattenRecord(root.path("aggregations")));
+                collectBuckets("", aggregationNode, aggregations);
+                if (aggregations.isEmpty() && aggregationNode.isObject()
+                        && !aggregationNode.isEmpty()) {
+                    addRecord(aggregations, flattenRecord(aggregationNode));
                 }
                 if (!aggregations.isEmpty()) {
-                    return structuredWithRaw(tabular(aggregations), json);
+                    return structuredWithRaw(tabular(aggregations), json, aggregationNode);
                 }
-                // A valid empty search remains a genuine zero-row result.
-                return new MappedResponse(tabular(List.of()), null, true);
+                if (isOrdinaryEmptySearch(root)) {
+                    return new MappedResponse(tabular(List.of()), null, true);
+                }
+                String raw = truncateRaw(json);
+                return new MappedResponse(rawFallback(raw), raw, false);
             }
         }
         List<Map<String, Object>> records = new ArrayList<>();
@@ -90,18 +94,54 @@ public final class JsonResultMapper {
     }
 
     private static MappedResponse structuredWithRaw(TabularResult result, String json) {
+        return structuredWithRaw(result, json, null);
+    }
+
+    private static MappedResponse structuredWithRaw(
+            TabularResult result, String json, JsonNode aggregations) {
         String raw = truncateRaw(json);
         List<TabularResult.Column> columns = new ArrayList<>(result.columns());
+        String aggregationJson = aggregations != null && aggregations.isObject()
+                ? json(aggregations)
+                : null;
+        if (aggregationJson != null) {
+            columns.add(new TabularResult.Column("_aggregations", Types.LONGVARCHAR, "JSON"));
+        }
         columns.add(new TabularResult.Column("_response", Types.LONGVARCHAR, "JSON"));
         List<List<Object>> rows = new ArrayList<>(result.rows().size());
         for (int i = 0; i < result.rows().size(); i++) {
             List<Object> row = new ArrayList<>(result.rows().get(i));
+            if (aggregationJson != null) {
+                // Aggregations remain available even when the raw response is capped.
+                row.add(i == 0 ? aggregationJson : null);
+            }
             // Keep one reference, not one multi-megabyte value per row.
             row.add(i == 0 ? raw : null);
             rows.add(row);
         }
         TabularResult withRaw = new TabularResult(columns, rows, raw, true);
         return new MappedResponse(withRaw, raw, true);
+    }
+
+    private static boolean isOrdinaryEmptySearch(JsonNode root) {
+        Set<String> ordinaryFields = Set.of(
+                "hits", "took", "timed_out", "_shards", "num_reduce_phases", "terminated_early");
+        if (root.properties().stream().anyMatch(entry -> !ordinaryFields.contains(entry.getKey()))) {
+            return false;
+        }
+        JsonNode timedOut = root.get("timed_out");
+        if (timedOut != null && (!timedOut.isBoolean() || timedOut.booleanValue())) return false;
+        JsonNode terminatedEarly = root.get("terminated_early");
+        if (terminatedEarly != null
+                && (!terminatedEarly.isBoolean() || terminatedEarly.booleanValue())) return false;
+        JsonNode shards = root.get("_shards");
+        if (shards != null) {
+            if (!shards.isObject()) return false;
+            if (shards.path("failed").asLong(0) != 0) return false;
+            JsonNode failures = shards.get("failures");
+            if (failures != null && (!failures.isArray() || !failures.isEmpty())) return false;
+        }
+        return true;
     }
 
     static String truncateRaw(String json) {

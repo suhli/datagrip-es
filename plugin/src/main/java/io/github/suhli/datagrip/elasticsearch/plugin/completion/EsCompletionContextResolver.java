@@ -104,7 +104,7 @@ public final class EsCompletionContextResolver {
             return builder.location(EsCaretLocation.BODY).expectedKind(EsExpectedKind.UNKNOWN).build();
         }
         EsJsonPathScanner.ScanResult scan = EsJsonPathScanner.scan(requestText, bodyStart, caretInRequest);
-        return resolveBodyContext(builder, pathInfo, scan);
+        return resolveBodyContext(builder, pathInfo, method, scan);
     }
 
     private EsCompletionContext resolveUrlContext(
@@ -149,6 +149,7 @@ public final class EsCompletionContextResolver {
     private EsCompletionContext resolveBodyContext(
             EsCompletionContext.Builder builder,
             PathInfo pathInfo,
+            String method,
             EsJsonPathScanner.ScanResult scan) {
         builder.location(EsCaretLocation.BODY)
                 .prefix(scan.prefix())
@@ -181,9 +182,10 @@ public final class EsCompletionContextResolver {
             return builder.expectedKind(EsExpectedKind.FIELD_VALUE).build();
         }
         if (!scan.expectingKey()) {
-            EsSchemaModels.DslNode node = schema.findProperty(parent, lastSegment(path));
+            EsSchemaModels.DslNode node = findRequestNode(method, pathInfo, path);
+            if (node == null) node = schema.findProperty(parent, lastSegment(path));
             if (node != null) {
-                if ("boolean".equals(node.valueType())) {
+                if (node.valueType().contains("boolean")) {
                     return builder.expectedKind(EsExpectedKind.BOOLEAN_VALUE).build();
                 }
                 if ("enum".equals(node.valueType()) || !node.enumValues().isEmpty()) {
@@ -199,6 +201,15 @@ public final class EsCompletionContextResolver {
         }
 
         if (scan.expectingKey()) {
+            EsSchemaModels.Endpoint requestEndpoint =
+                    resolveRequestEndpoint(method, pathInfo);
+            if (requestEndpoint != null
+                    && !schema.isSharedQueryDslNode(
+                            requestEndpoint.requestBodyType(), path)
+                    && !schema.requestChildren(
+                            requestEndpoint.requestBodyType(), path).isEmpty()) {
+                return builder.expectedKind(EsExpectedKind.BODY_KEY).build();
+            }
             if (isQueryDslContext(path, parent, stack)) {
                 return builder.expectedKind(EsExpectedKind.QUERY_DSL).build();
             }
@@ -207,7 +218,8 @@ public final class EsCompletionContextResolver {
                     return builder.expectedKind(EsExpectedKind.BODY_KEY).build();
                 }
             }
-            EsSchemaModels.DslNode parentNode = schema.findKey(parent);
+            EsSchemaModels.DslNode parentNode = findRequestNode(method, pathInfo, path);
+            if (parentNode == null) parentNode = schema.findKey(parent);
             if (parentNode != null && !parentNode.children().isEmpty()) {
                 return builder.expectedKind(EsExpectedKind.BODY_KEY).build();
             }
@@ -217,6 +229,20 @@ public final class EsCompletionContextResolver {
             return builder.expectedKind(EsExpectedKind.BODY_KEY).build();
         }
         return builder.expectedKind(EsExpectedKind.UNKNOWN).build();
+    }
+
+    private EsSchemaModels.DslNode findRequestNode(String method, PathInfo pathInfo, String jsonPath) {
+        EsSchemaModels.Endpoint endpoint = resolveRequestEndpoint(method, pathInfo);
+        return endpoint == null ? null
+                : schema.findRequestNode(endpoint.requestBodyType(), jsonPath);
+    }
+
+    private EsSchemaModels.Endpoint resolveRequestEndpoint(String method, PathInfo pathInfo) {
+        EsCompletionSchema.ResolvedEndpoint resolved =
+                schema.resolveEndpoint(method, pathInfo.pathOnly());
+        EsSchemaModels.Endpoint endpoint = resolved == null ? null : resolved.endpoint();
+        return endpoint != null ? endpoint : schema.findEndpointByPartialPath(
+                method, pathInfo.pathOnly(), pathInfo.endpoint());
     }
 
     private boolean isSearchRoot(String endpoint) {

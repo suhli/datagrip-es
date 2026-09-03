@@ -37,7 +37,14 @@ record DslCompletionDocument(
         String specVersion,
         String generatedAt,
         Map<String, DslKey> keys,
-        Map<String, List<String>> endpointBodyRoots) {}
+        Map<String, List<String>> endpointBodyRoots,
+        Map<String, Map<String, GenericProperty>> requestBodySchemas,
+        Map<String, Map<String, GenericProperty>> typeSchemas) {}
+
+record GenericProperty(
+        DslKey node,
+        List<String> childTypes,
+        List<String> dictionaryValueTypes) {}
 
 record DslKey(
         String key,

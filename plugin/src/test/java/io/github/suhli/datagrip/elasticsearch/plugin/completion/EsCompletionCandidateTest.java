@@ -1,5 +1,6 @@
 package io.github.suhli.datagrip.elasticsearch.plugin.completion;
 
+import com.intellij.codeInsight.lookup.LookupElementPresentation;
 import io.github.suhli.datagrip.elasticsearch.plugin.completion.metadata.EsCompletionMetadataSnapshot;
 import io.github.suhli.datagrip.elasticsearch.plugin.completion.model.EsCaretLocation;
 import io.github.suhli.datagrip.elasticsearch.plugin.completion.model.EsCompletionContext;
@@ -15,6 +16,7 @@ import java.util.Set;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
+import static org.junit.jupiter.api.Assertions.assertNull;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 /** Candidate selection without IntelliJ CompletionResultSet. */
@@ -89,6 +91,36 @@ class EsCompletionCandidateTest {
                         "user.id", Set.of("keyword"), Set.of("game_logs"), false),
                 ctx);
         assertEquals("user.id", element.getLookupString());
+    }
+
+    @Test
+    void partialMappingCoverageAppearsOnlyInFieldLookupTail() {
+        EsCompletionContext ctx = EsCompletionContext.builder()
+                .location(EsCaretLocation.BODY)
+                .expectedKind(EsExpectedKind.FIELD_VALUE)
+                .build();
+        var field = new EsCompletionMetadataSnapshot.FieldInfo(
+                "user.id", Set.of("keyword"), Set.of("logs-1"), false);
+        var partialSnapshot = new EsCompletionMetadataSnapshot(
+                "ds", "8.17.0", List.of(), Map.of("user.id", field),
+                System.currentTimeMillis(), true, 37, 20);
+
+        var partialElement = EsLookupFactory.field(
+                field, ctx, EsRestCompletionContributor.partialFieldsDescription(partialSnapshot));
+        var partialPresentation = new LookupElementPresentation();
+        partialElement.renderElement(partialPresentation);
+        assertEquals(
+                " · Mapping fields are partial (20/37 targets)",
+                partialPresentation.getTailText());
+        assertEquals("keyword", partialPresentation.getTypeText());
+
+        var normalElement = EsLookupFactory.field(field, ctx);
+        var normalPresentation = new LookupElementPresentation();
+        normalElement.renderElement(normalPresentation);
+        assertNull(EsRestCompletionContributor.partialFieldsDescription(
+                EsCompletionMetadataSnapshot.EMPTY));
+        assertNull(normalPresentation.getTailText());
+        assertEquals("keyword", normalPresentation.getTypeText());
     }
 
     private static EsCompletionSchema schema() {

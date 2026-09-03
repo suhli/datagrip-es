@@ -5,6 +5,8 @@ import com.intellij.testFramework.fixtures.BasePlatformTestCase;
 import io.github.suhli.datagrip.elasticsearch.plugin.completion.metadata.EsCompletionMetadataService;
 import io.github.suhli.datagrip.elasticsearch.plugin.completion.metadata.EsCompletionMetadataSnapshot;
 import io.github.suhli.datagrip.elasticsearch.plugin.completion.schema.EsCompletionSchemaLoader;
+import io.github.suhli.datagrip.elasticsearch.plugin.completion.schema.EsCompletionSchema;
+import io.github.suhli.datagrip.elasticsearch.plugin.completion.schema.EsSchemaModels;
 import io.github.suhli.datagrip.elasticsearch.plugin.language.EsRestFileType;
 
 import java.util.List;
@@ -182,6 +184,109 @@ public class EsRestCompletionFixtureTest extends BasePlatformTestCase {
                 lookup.contains("settings") || lookup.contains("mappings") || lookup.contains("aliases"));
         assertFalse("Non-search endpoint must not offer SearchRequest keys: " + lookup,
                 lookup.contains("query") || lookup.contains("aggs") || lookup.contains("size"));
+    }
+
+    public void testRequestScopedSchemasDoNotCrossContaminateAndNavigateDeepPaths() {
+        EsCompletionSchema original = EsCompletionSchemaLoader.get();
+        EsCompletionSchema scoped = new EsCompletionSchema(
+                List.of(endpoint("api-a", "api.a.Request", "/api-a"),
+                        endpoint("api-b", "api.b.Request", "/api-b")),
+                Map.of(),
+                Map.of("api-a", List.of("settings", "query", "objects", "metadata", "track_total_hits"),
+                        "api-b", List.of("settings", "query")),
+                Map.of(
+                        "api.a.Request", Map.of(
+                                "settings", property("settings", "A.Settings", "object"),
+                                "query", property("query", "A.Query", "object"),
+                                "objects", property("objects", "A.Item", "array<object>"),
+                                "metadata", dictionaryProperty("metadata", "A.Metadata"),
+                                "track_total_hits",
+                                property("track_total_hits", null, "boolean|number")),
+                        "api.b.Request", Map.of(
+                                "settings", property("settings", "B.Settings", "object"),
+                                "query", property("query", "B.Query", "object"))),
+                Map.of(
+                        "A.Settings", Map.of("foo", property("foo", "A.Foo", "object")),
+                        "A.Foo", Map.of("child", property("child", "A.Child", "object")),
+                        "A.Child", Map.of(
+                                "grandchild", property("grandchild", "A.Grandchild", "object")),
+                        "A.Grandchild", Map.of("leaf", property("leaf", null, "string")),
+                        "A.Query", Map.of("script", property("script", null, "string")),
+                        "A.Item", Map.of("object_leaf", property("object_leaf", null, "string")),
+                        "A.Metadata", Map.of("map_leaf", property("map_leaf", null, "string")),
+                        "B.Settings", Map.of("bar", property("bar", null, "string")),
+                        "B.Query", Map.of("source", property("source", null, "string"))));
+        EsCompletionSchemaLoader.resetForTests(scoped);
+        try {
+            List<String> aSettings = complete("""
+                    PUT /api-a
+                    {"settings":{"<caret>"}}
+                    """);
+            assertTrue(aSettings.contains("foo"));
+            assertFalse(aSettings.contains("bar"));
+
+            List<String> bSettings = complete("""
+                    PUT /api-b
+                    {"settings":{"<caret>"}}
+                    """);
+            assertTrue(bSettings.contains("bar"));
+            assertFalse(bSettings.contains("foo"));
+
+            List<String> aQuery = complete("""
+                    PUT /api-a
+                    {"query":{"<caret>"}}
+                    """);
+            assertTrue(aQuery.contains("script"));
+            assertFalse(aQuery.contains("source"));
+
+            List<String> deep = complete("""
+                    PUT /api-a
+                    {"settings":{"foo":{"child":{"grandchild":{"<caret>"}}}}}
+                    """);
+            assertTrue(deep.contains("leaf"));
+
+            assertTrue(complete("""
+                    PUT /api-a
+                    {"objects":[{"<caret>"}]}
+                    """).contains("object_leaf"));
+            assertTrue(complete("""
+                    PUT /api-a
+                    {"metadata":{"custom":{"<caret>"}}}
+                    """).contains("map_leaf"));
+            List<String> union = complete("""
+                    PUT /api-a
+                    {"track_total_hits": <caret>}
+                    """);
+            assertTrue(union.contains("true"));
+            assertTrue(union.contains("false"));
+        } finally {
+            EsCompletionSchemaLoader.resetForTests(original);
+        }
+    }
+
+    private static EsSchemaModels.Endpoint endpoint(String name, String requestType, String path) {
+        return new EsSchemaModels.Endpoint(
+                name, List.of("PUT"), List.of(path), List.of(), requestType,
+                "", null, null, false);
+    }
+
+    private static EsSchemaModels.GenericProperty property(
+            String key, String childType, String valueType) {
+        return new EsSchemaModels.GenericProperty(
+                new EsSchemaModels.DslNode(
+                        key, "request_body", List.of(), List.of(), valueType, false,
+                        List.of(), null, "request body", null, null, false, 100),
+                childType == null ? List.of() : List.of(childType),
+                List.of());
+    }
+
+    private static EsSchemaModels.GenericProperty dictionaryProperty(
+            String key, String valueType) {
+        return new EsSchemaModels.GenericProperty(
+                new EsSchemaModels.DslNode(
+                        key, "request_body", List.of(), List.of(), "dictionary<object>", false,
+                        List.of(), null, "request body", null, null, false, 100),
+                List.of(), List.of(valueType));
     }
 
     private List<String> complete(String text) {

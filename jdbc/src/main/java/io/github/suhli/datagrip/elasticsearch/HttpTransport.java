@@ -16,7 +16,9 @@ import org.apache.hc.core5.ssl.SSLContexts;
 import org.apache.hc.core5.util.Timeout;
 
 import javax.net.ssl.SSLContext;
+import java.io.ByteArrayOutputStream;
 import java.io.IOException;
+import java.io.InputStream;
 import java.nio.charset.StandardCharsets;
 import java.security.GeneralSecurityException;
 import java.util.ArrayList;
@@ -34,6 +36,7 @@ public final class HttpTransport implements Transport {
     private final Map<String, String> defaultHeaders;
     private final long connectTimeoutMillis;
     private final long defaultResponseTimeoutMillis;
+    private final long maxResponseBytes;
     private volatile int networkTimeoutMillis;
     private volatile boolean networkTimeoutDisabled;
 
@@ -50,6 +53,7 @@ public final class HttpTransport implements Transport {
         }
         connectTimeoutMillis = config.connectTimeout().toMillis();
         defaultResponseTimeoutMillis = config.responseTimeout().toMillis();
+        maxResponseBytes = config.maxResponseBytes();
         networkTimeoutMillis = 0;
         networkTimeoutDisabled = false;
         RequestConfig requestConfig = RequestConfig.custom()
@@ -145,7 +149,7 @@ public final class HttpTransport implements Transport {
                 for (Header header : response.getHeaders()) {
                     headers.computeIfAbsent(header.getName(), ignored -> new ArrayList<>()).add(header.getValue());
                 }
-                String body = response.getEntity() == null ? "" : EntityUtils.toString(response.getEntity());
+                String body = readEntity(response.getEntity(), maxResponseBytes);
                 return new Response(response.getCode(), Map.copyOf(headers), body);
             });
             if (LOG.isLoggable(Level.FINE)) {
@@ -159,6 +163,49 @@ public final class HttpTransport implements Transport {
             if (cancellation != null && cancellation.isCancelled()) {
                 Thread.interrupted();
             }
+        }
+    }
+
+    private static String readEntity(org.apache.hc.core5.http.HttpEntity entity, long limit)
+            throws IOException {
+        if (entity == null) return "";
+        long contentLength = entity.getContentLength();
+        if (limit > 0 && contentLength > limit) {
+            throw new ResponseTooLargeException(limit);
+        }
+        if (limit == 0) {
+            try {
+                return EntityUtils.toString(entity);
+            } catch (org.apache.hc.core5.http.ParseException e) {
+                throw new IOException("Invalid Elasticsearch response entity metadata", e);
+            }
+        }
+
+        ByteArrayOutputStream output = new ByteArrayOutputStream(
+                (int) Math.min(Math.max(contentLength, 0), 8192));
+        byte[] buffer = new byte[8192];
+        long total = 0;
+        try (InputStream input = entity.getContent()) {
+            int count;
+            while ((count = input.read(buffer)) != -1) {
+                total += count;
+                if (total > limit) throw new ResponseTooLargeException(limit);
+                output.write(buffer, 0, count);
+            }
+        }
+        return output.toString(StandardCharsets.UTF_8);
+    }
+
+    static final class ResponseTooLargeException extends IOException {
+        private final long limit;
+
+        ResponseTooLargeException(long limit) {
+            super("Elasticsearch response exceeds configured maximum of " + limit + " bytes");
+            this.limit = limit;
+        }
+
+        long limit() {
+            return limit;
         }
     }
 
