@@ -1,14 +1,29 @@
 <?xml version="1.0" encoding="UTF-8"?>
 <idea-plugin>
     <id>io.github.suhli.elasticsearch.rest</id>
-    <name>Elasticsearch REST</name>
+    <name>ES REST Data Source</name>
     <vendor url="https://github.com/suhli/datagrip-es">suhli</vendor>
 
     <description><![CDATA[
-      A lightweight Elasticsearch REST data source for DataGrip. It exposes
-      Elasticsearch indices and mappings through JDBC metadata and executes
-      Dev Tools-style REST requests without Elasticsearch SQL or a commercial
-      Elasticsearch JDBC driver.
+      <p>ES REST Data Source connects DataGrip to Elasticsearch through its REST API.</p>
+
+      <p>It provides a DataGrip data source backed by the Elasticsearch REST API and a
+      Dev Tools-style <code>.esrest</code> query console, without using Elasticsearch SQL.</p>
+
+      <h3>Features</h3>
+      <ul>
+        <li>Connect through the Elasticsearch REST API.</li>
+        <li>Browse indices and mapping fields in database tools.</li>
+        <li>Execute REST requests from <code>.esrest</code> files.</li>
+        <li>Complete API paths, parameters, request bodies, Query DSL, aggregations, and mapping fields.</li>
+        <li>Offer dynamic completion for indices, aliases, data streams, and mapping fields.</li>
+        <li>Support JSON and NDJSON request bodies.</li>
+        <li>Support Basic and API Key authentication, with configurable TLS certificate verification.</li>
+        <li>Support Elasticsearch 7.x, 8.x, and 9.x.</li>
+      </ul>
+
+      <p>ES REST Data Source is an independent open-source project and is not affiliated
+      with or endorsed by Elasticsearch B.V., Elastic, or JetBrains.</p>
     ]]></description>
 
     <depends>com.intellij.modules.platform</depends>

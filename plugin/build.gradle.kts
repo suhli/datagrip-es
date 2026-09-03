@@ -7,7 +7,7 @@ plugins {
 }
 
 base {
-    archivesName.set("datagrip-elasticsearch-rest")
+    archivesName.set("es-rest-data-source")
 }
 
 repositories {
@@ -77,8 +77,9 @@ java {
 intellijPlatform {
     buildSearchableOptions = false
     pluginConfiguration {
-        name = "Elasticsearch REST"
+        name = "ES REST Data Source"
         version = providers.gradleProperty("pluginVersion")
+        changeNotes = releaseNotes(providers.gradleProperty("pluginVersion").get())
         ideaVersion {
             sinceBuild = providers.gradleProperty("pluginSinceBuild")
             untilBuild = provider { null }
@@ -114,6 +115,17 @@ intellijPlatform {
             create(IntelliJPlatformType.DataGrip, "2026.2")
         }
     }
+}
+
+fun releaseNotes(version: String): String {
+    val changelog = rootProject.file("CHANGELOG.md")
+    val content = changelog.readText()
+    val header = Regex("(?m)^## " + Regex.escape(version) + "\\s*$")
+    val start = header.find(content)
+        ?: error("CHANGELOG.md has no section for plugin version $version")
+    val bodyStart = start.range.last + 1
+    val bodyEnd = Regex("(?m)^## ").find(content, bodyStart)?.range?.first ?: content.length
+    return content.substring(bodyStart, bodyEnd).trim()
 }
 
 tasks.buildSearchableOptions {

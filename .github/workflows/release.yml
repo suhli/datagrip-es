@@ -1,41 +1,26 @@
-name: Release
+name: Marketplace Release
+
 on:
   workflow_dispatch:
     inputs:
-      version:
-        description: "Plugin version (SemVer), e.g. 0.1.0 or 0.2.0-beta.1"
+      publish_to_marketplace:
+        description: "Publish to JetBrains Marketplace (enable only after the initial manual upload)"
         required: true
-        type: string
-      prerelease:
-        description: "Mark GitHub Release as prerelease"
-        required: false
         type: boolean
         default: false
 
 concurrency:
-  group: release-${{ github.ref }}
+  group: marketplace-release-${{ github.ref }}
   cancel-in-progress: false
 
 jobs:
   release:
-    name: Test, Release, Publish
+    name: Verify, Sign, and Package
     runs-on: ubuntu-latest
     permissions:
-      contents: write
-    env:
-      PLUGIN_VERSION: ${{ inputs.version }}
+      contents: read
     steps:
-      - name: Validate version
-        shell: bash
-        run: |
-          if [[ ! "$PLUGIN_VERSION" =~ ^[0-9]+\.[0-9]+\.[0-9]+([.-][A-Za-z0-9.-]+)?$ ]]; then
-            echo "Invalid version: $PLUGIN_VERSION"
-            echo "Expected SemVer like 0.1.0 or 0.2.0-beta.1"
-            exit 1
-          fi
-          echo "Releasing v$PLUGIN_VERSION"
-
-      - name: Fetch Sources
+      - name: Fetch sources
         uses: actions/checkout@v5
 
       - name: Setup Java
@@ -50,57 +35,77 @@ jobs:
       - name: Setup Gradle
         uses: gradle/actions/setup-gradle@v6
 
-      - name: Test and verify plugin
-        run: ./gradlew test verifyPlugin -PpluginVersion="$PLUGIN_VERSION" --no-configuration-cache --console=plain
-
-      - name: Build and sign plugin
-        env:
-          CERTIFICATE_CHAIN: ${{ secrets.CERTIFICATE_CHAIN }}
-          PRIVATE_KEY: ${{ secrets.PRIVATE_KEY }}
-          PRIVATE_KEY_PASSWORD: ${{ secrets.PRIVATE_KEY_PASSWORD }}
-        run: ./gradlew buildPlugin signPlugin -PpluginVersion="$PLUGIN_VERSION" --no-configuration-cache --console=plain
-
-      - name: Publish to JetBrains Marketplace
-        env:
-          PUBLISH_TOKEN: ${{ secrets.PUBLISH_TOKEN }}
-          CERTIFICATE_CHAIN: ${{ secrets.CERTIFICATE_CHAIN }}
-          PRIVATE_KEY: ${{ secrets.PRIVATE_KEY }}
-          PRIVATE_KEY_PASSWORD: ${{ secrets.PRIVATE_KEY_PASSWORD }}
-        run: ./gradlew publishPlugin -PpluginVersion="$PLUGIN_VERSION" --no-configuration-cache --console=plain
-
-      - name: Create GitHub Release
-        env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      - name: Read release version
+        id: version
         shell: bash
         run: |
-          TAG="v${PLUGIN_VERSION}"
-          PRERELEASE_FLAG=""
-          if [[ "${{ inputs.prerelease }}" == "true" ]]; then
-            PRERELEASE_FLAG="--prerelease"
+          VERSION="$(sed -n 's/^pluginVersion=//p' gradle.properties)"
+          if [[ ! "$VERSION" =~ ^[0-9]+\.[0-9]+\.[0-9]+([.-][A-Za-z0-9.-]+)?$ ]]; then
+            echo "Invalid pluginVersion: $VERSION"
+            exit 1
+          fi
+          if ! grep -q "^## $VERSION$" CHANGELOG.md; then
+            echo "CHANGELOG.md has no section for $VERSION"
+            exit 1
+          fi
+          echo "value=$VERSION" >> "$GITHUB_OUTPUT"
+
+      - name: Verify signing secrets
+        env:
+          CERTIFICATE_CHAIN: ${{ secrets.CERTIFICATE_CHAIN }}
+          PRIVATE_KEY: ${{ secrets.PRIVATE_KEY }}
+          PRIVATE_KEY_PASSWORD: ${{ secrets.PRIVATE_KEY_PASSWORD }}
+          PUBLISH_TOKEN: ${{ secrets.PUBLISH_TOKEN }}
+          PUBLISH_TO_MARKETPLACE: ${{ inputs.publish_to_marketplace }}
+        shell: bash
+        run: |
+          for secret in CERTIFICATE_CHAIN PRIVATE_KEY PRIVATE_KEY_PASSWORD; do
+            if [[ -z "${!secret}" ]]; then
+              echo "Missing required signing secret: $secret"
+              exit 1
+            fi
+          done
+          if [[ "$PUBLISH_TO_MARKETPLACE" == "true" && -z "$PUBLISH_TOKEN" ]]; then
+            echo "PUBLISH_TOKEN is required when publishing to Marketplace"
+            exit 1
           fi
 
-          NOTES="$(cat <<EOF
-          ## Elasticsearch REST ${PLUGIN_VERSION}
+      - name: Test and verify plugin
+        run: ./gradlew test verifyPlugin --no-configuration-cache --console=plain
 
-          DataGrip data source backed by Elasticsearch's standard REST API (no SQL/JDBC driver subscription required).
+      - name: Build, sign, and verify plugin signature
+        env:
+          CERTIFICATE_CHAIN: ${{ secrets.CERTIFICATE_CHAIN }}
+          PRIVATE_KEY: ${{ secrets.PRIVATE_KEY }}
+          PRIVATE_KEY_PASSWORD: ${{ secrets.PRIVATE_KEY_PASSWORD }}
+        run: ./gradlew buildPlugin signPlugin verifyPluginSignature --no-configuration-cache --console=plain
 
-          ### Runtime requirements
-          - DataGrip 2025.1+ (or IU with Database Tools)
-          - Elasticsearch 7.x, 8.x, or 9.x
+      - name: Locate signed distribution
+        id: signed_zip
+        shell: bash
+        run: |
+          shopt -s nullglob
+          files=(plugin/build/distributions/*-signed.zip)
+          if [[ ${#files[@]} -ne 1 ]]; then
+            echo "Expected exactly one signed plugin ZIP; found ${#files[@]}"
+            printf '%s\n' "${files[@]}"
+            exit 1
+          fi
+          echo "path=${files[0]}" >> "$GITHUB_OUTPUT"
 
-          ### Artifacts
-          Plugin zip from this release can also be installed via **Settings → Plugins → Install Plugin from Disk**.
-          EOF
-          )"
-
-          gh release create "$TAG" \
-            --title "$TAG" \
-            --notes "$NOTES" \
-            $PRERELEASE_FLAG \
-            plugin/build/distributions/*
-
-      - name: Upload workflow artifact
+      - name: Upload signed plugin ZIP
         uses: actions/upload-artifact@v7
         with:
-          name: plugin-${{ env.PLUGIN_VERSION }}
-          path: plugin/build/distributions/*
+          name: es-rest-data-source-${{ steps.version.outputs.value }}-signed
+          path: ${{ steps.signed_zip.outputs.path }}
+          if-no-files-found: error
+
+      # Enable only after the plugin has been created by an initial manual Marketplace upload.
+      - name: Publish to JetBrains Marketplace
+        if: ${{ inputs.publish_to_marketplace }}
+        env:
+          CERTIFICATE_CHAIN: ${{ secrets.CERTIFICATE_CHAIN }}
+          PRIVATE_KEY: ${{ secrets.PRIVATE_KEY }}
+          PRIVATE_KEY_PASSWORD: ${{ secrets.PRIVATE_KEY_PASSWORD }}
+          PUBLISH_TOKEN: ${{ secrets.PUBLISH_TOKEN }}
+        run: ./gradlew publishPlugin --no-configuration-cache --console=plain
