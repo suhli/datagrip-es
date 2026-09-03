@@ -1,0 +1,7 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 40 40">
+  <!-- Original mark: layered data source, request/response arrows, and query lens. -->
+  <path fill="#8192FF" d="M11 10.5C11 7.46 14.8 5 19.5 5S28 7.46 28 10.5v17c0 3.04-3.8 5.5-8.5 5.5S11 30.54 11 27.5Z"/>
+  <path fill="#AFBCFF" d="M12 16.2c1.55 1.6 4.26 2.55 7.5 2.55s5.95-.95 7.5-2.55v3.2c-1.55 1.6-4.26 2.55-7.5 2.55s-5.95-.95-7.5-2.55Zm0 7.2c1.55 1.6 4.26 2.55 7.5 2.55s5.95-.95 7.5-2.55v3.2c-1.55 1.6-4.26 2.55-7.5 2.55s-5.95-.95-7.5-2.55Z"/>
+  <path fill="#4FD3CB" d="M5 18l4.5-4.5v3h5v3h-5v3Zm30 4l-4.5 4.5v-3h-5v-3h5v-3Z"/>
+  <path fill="#C0B0FF" fill-rule="evenodd" d="M27 6a6 6 0 1 1 0 12 6 6 0 0 1 0-12m0 2.7a3.3 3.3 0 1 0 0 6.6 3.3 3.3 0 0 0 0-6.6M30.9 16.2l4.4 4.4-1.9 1.9-4.4-4.4Z"/>
+</svg>
