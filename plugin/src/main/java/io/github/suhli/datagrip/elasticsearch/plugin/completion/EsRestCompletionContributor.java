@@ -90,12 +90,17 @@ public final class EsRestCompletionContributor extends CompletionContributor {
     }
 
     static List<String> lookupStringsForTest(PsiFile file, int offset, String datasourceId) {
+        return lookupElementsForTest(file, offset, datasourceId).stream()
+                .map(LookupElement::getLookupString).toList();
+    }
+
+    static List<LookupElement> lookupElementsForTest(PsiFile file, int offset, String datasourceId) {
         EsCompletionSchema schema = EsCompletionSchemaLoader.get();
         EsCompletionContext ctx = new EsCompletionContextResolver(schema).resolve(file, offset, datasourceId, "");
         EsCompletionMetadataSnapshot snapshot = EsCompletionMetadataService.getInstance(file.getProject())
                 .snapshotForIndices(datasourceId, ctx.indices());
-        List<String> items = new ArrayList<>();
-        produceCompletions(ctx, schema, snapshot, element -> items.add(element.getLookupString()));
+        List<LookupElement> items = new ArrayList<>();
+        produceCompletions(ctx, schema, snapshot, items::add);
         return items;
     }
 

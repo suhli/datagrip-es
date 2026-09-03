@@ -10,7 +10,7 @@ import io.github.suhli.datagrip.elasticsearch.plugin.language.EsRestDocumentForm
 import org.jetbrains.annotations.Nullable;
 
 /**
- * Context-aware JSON/URL insert handler with optional Live Template tab stops.
+ * Context-aware JSON/URL insert handler with schema snippet caret placement.
  */
 public final class EsSnippetInsertHandler implements InsertHandler<LookupElement> {
     private final String insertion;
@@ -97,11 +97,15 @@ public final class EsSnippetInsertHandler implements InsertHandler<LookupElement
     private void insertTemplate(InsertionContext context, int start) {
         String rendered = templateText;
         if (asJsonKey && alreadyQuoted) {
-            rendered = stripOuterQuotesForTemplate(rendered);
+            rendered = EsSnippetDefaults.adjustForInsideString(rendered);
         }
         EsSnippetRenderer.RenderResult result = EsSnippetRenderer.render(rendered);
         Editor editor = context.getEditor();
         Document document = editor.getDocument();
+        if (asJsonKey && alreadyQuoted && start < document.getTextLength()
+                && document.getCharsSequence().charAt(start) == '"') {
+            document.deleteString(start, start + 1);
+        }
         document.insertString(start, result.text());
         placeCursorAfterSnippet(editor, document, start, result);
     }
@@ -116,28 +120,56 @@ public final class EsSnippetInsertHandler implements InsertHandler<LookupElement
                 : insertStart + rendered.text().length();
         String before = document.getText();
         String formatted = EsRestDocumentFormatter.format(before);
+        int cursor = formatted.equals(before)
+                ? fallbackCursor : mapCursorOffset(before, formatted, fallbackCursor);
+
+        // Pretty printing collapses empty containers. Keep the active placeholder open for typing.
+        int open = cursor - 1;
+        while (open >= 0 && Character.isWhitespace(formatted.charAt(open))) open--;
+        int close = cursor;
+        while (close < formatted.length() && Character.isWhitespace(formatted.charAt(close))) close++;
+        if (rendered.cursorOffset() >= 0 && open >= 0 && close < formatted.length()
+                && ((formatted.charAt(open) == '{' && formatted.charAt(close) == '}')
+                || (formatted.charAt(open) == '[' && formatted.charAt(close) == ']'))) {
+            int lineStart = formatted.lastIndexOf('\n', open) + 1;
+            int indentEnd = lineStart;
+            while (indentEnd < open && (formatted.charAt(indentEnd) == ' '
+                    || formatted.charAt(indentEnd) == '\t')) indentEnd++;
+            String indent = formatted.substring(lineStart, indentEnd);
+            String innerIndent = indent + "  ";
+            formatted = formatted.substring(0, open + 1) + "\n" + innerIndent
+                    + "\n" + indent + formatted.substring(close);
+            cursor = open + 2 + innerIndent.length();
+        }
         if (!formatted.equals(before)) {
             document.replaceString(0, document.getTextLength(), formatted);
-            int fieldCursor = EsSnippetRenderer.findEmptyFieldKeyCursor(formatted, insertStart);
-            editor.getCaretModel().moveToOffset(
-                    fieldCursor >= 0 ? fieldCursor : mapCursorOffset(before, formatted, fallbackCursor));
-            return;
         }
-        editor.getCaretModel().moveToOffset(fallbackCursor);
+        editor.getCaretModel().moveToOffset(cursor);
     }
 
     private static int mapCursorOffset(String before, String after, int cursorInBefore) {
-        String prefix = safePrefix(before, cursorInBefore);
-        int idx = after.indexOf(prefix);
-        if (idx >= 0) {
-            return idx + prefix.length();
+        // Follow the same tokens across whitespace changes, including repeated snippets in a console.
+        int significantChars = 0;
+        boolean inString = false;
+        boolean escaped = false;
+        for (int i = 0; i < Math.min(cursorInBefore, before.length()); i++) {
+            char c = before.charAt(i);
+            if (inString || !Character.isWhitespace(c)) significantChars++;
+            if (escaped) escaped = false;
+            else if (inString && c == '\\') escaped = true;
+            else if (c == '"') inString = !inString;
         }
-        return Math.min(cursorInBefore, after.length());
-    }
-
-    private static String safePrefix(String text, int cursor) {
-        int len = Math.min(cursor, text.length());
-        return text.substring(Math.max(0, len - 32), len);
+        inString = false;
+        escaped = false;
+        for (int i = 0; i < after.length(); i++) {
+            if (significantChars == 0) return i;
+            char c = after.charAt(i);
+            if (inString || !Character.isWhitespace(c)) significantChars--;
+            if (escaped) escaped = false;
+            else if (inString && c == '\\') escaped = true;
+            else if (c == '"') inString = !inString;
+        }
+        return after.length();
     }
 
     static int findEmptyFieldKeyPairStart(CharSequence text, int offset) {
@@ -200,16 +232,6 @@ public final class EsSnippetInsertHandler implements InsertHandler<LookupElement
 
     static String escape(String value) {
         return value.replace("\\", "\\\\").replace("\"", "\\\"");
-    }
-
-    private static String stripOuterQuotesForTemplate(String template) {
-        if (template.startsWith("\"") && template.contains("\":")) {
-            int end = template.indexOf('"', 1);
-            if (end > 1) {
-                return template.substring(1, end) + template.substring(end + 1);
-            }
-        }
-        return template;
     }
 
     public static boolean isInsideQuotes(Document document, int offset) {

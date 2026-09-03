@@ -1,5 +1,10 @@
 package io.github.suhli.datagrip.elasticsearch.plugin.completion;
 
+import com.intellij.codeInsight.completion.CompletionInitializationContext;
+import com.intellij.codeInsight.completion.InsertionContext;
+import com.intellij.codeInsight.completion.OffsetMap;
+import com.intellij.codeInsight.lookup.LookupElement;
+import com.intellij.openapi.command.WriteCommandAction;
 import com.intellij.psi.PsiFile;
 import com.intellij.testFramework.fixtures.BasePlatformTestCase;
 import io.github.suhli.datagrip.elasticsearch.plugin.completion.metadata.EsCompletionMetadataService;
@@ -38,6 +43,66 @@ public class EsRestCompletionFixtureTest extends BasePlatformTestCase {
         assertTrue("Expected search body keys, got: " + lookup,
                 lookup.stream().anyMatch("query"::equals));
         assertTrue(lookup.stream().anyMatch(s -> s.equals("aggs") || s.equals("aggregations")));
+    }
+
+    public void testQueryInsertionFormatsObjectAndPlacesCaretInside() {
+        insertCompletion("GET /game_logs/_search\n{<caret>}", "query");
+        myFixture.checkResult("GET /game_logs/_search\n{\n  \"query\" : {\n    <caret>\n  }\n}");
+    }
+
+    public void testQueryInsertionReusesPairedQuotes() {
+        insertCompletion("GET /game_logs/_search\n{\"<caret>\"}", "query");
+        myFixture.checkResult("GET /game_logs/_search\n{\n  \"query\" : {\n    <caret>\n  }\n}");
+    }
+
+    public void testQueryInsertionClosesUnfinishedKeyQuote() {
+        insertCompletion("GET /game_logs/_search\n{\"qu<caret>}", "query");
+        myFixture.checkResult("GET /game_logs/_search\n{\n  \"query\" : {\n    <caret>\n  }\n}");
+    }
+
+    public void testNestedBoolInsertionFormatsObjectAndPlacesCaretInside() {
+        insertCompletion("GET /game_logs/_search\n{\"query\":{<caret>}}", "bool");
+        myFixture.checkResult("GET /game_logs/_search\n{\n  \"query\" : {\n    \"bool\" : {\n      <caret>\n    }\n  }\n}");
+    }
+
+    public void testTermInsertionKeepsCaretInFieldPlaceholder() {
+        insertCompletion("GET /game_logs/_search\n{\"query\":{<caret>}}", "term");
+        myFixture.checkResult("GET /game_logs/_search\n{\n  \"query\" : {\n    \"term\" : {\n      \"<caret>\" : \"\"\n    }\n  }\n}");
+    }
+
+    public void testQueryInsertionKeepsCaretInSecondRequest() {
+        insertCompletion("GET /first/_search\n{\"query\":{\"term\":{\"\":\"\"}}}\n\nGET /second/_search\n{<caret>}", "query");
+        String text = myFixture.getEditor().getDocument().getText();
+        int secondQuery = text.lastIndexOf("\"query\"");
+        assertTrue(myFixture.getCaretOffset() > secondQuery);
+        assertEquals("{\n    \n  }\n}", text.substring(text.indexOf('{', secondQuery)));
+        assertEquals(text.indexOf("\n  }", secondQuery), myFixture.getCaretOffset());
+    }
+
+    private void insertCompletion(String text, String key) {
+        PsiFile file = myFixture.configureByText(EsRestFileType.INSTANCE, text);
+        int tail = myFixture.getCaretOffset();
+        var schema = EsCompletionSchemaLoader.get();
+        var completion = new EsCompletionContextResolver(schema).resolve(file, tail, "", "");
+        var selected = EsRestCompletionContributor.lookupElementsForTest(file, tail, "").stream()
+                .filter(item -> item.getLookupString().equals(key))
+                .findFirst().orElseThrow(() -> new AssertionError("Missing completion: " + key));
+        WriteCommandAction.runWriteCommandAction(getProject(), () -> {
+            var editor = myFixture.getEditor();
+            var document = editor.getDocument();
+            int start = tail - completion.prefix().length();
+            // Completion replaces the typed prefix before invoking the lookup's insert handler.
+            document.replaceString(start, tail, selected.getLookupString());
+            int insertedTail = start + selected.getLookupString().length();
+            editor.getCaretModel().moveToOffset(insertedTail);
+            OffsetMap offsets = new OffsetMap(document);
+            offsets.addOffset(CompletionInitializationContext.START_OFFSET, start);
+            offsets.addOffset(CompletionInitializationContext.SELECTION_END_OFFSET, insertedTail);
+            offsets.addOffset(CompletionInitializationContext.IDENTIFIER_END_OFFSET, insertedTail);
+            InsertionContext insertion = new InsertionContext(
+                    offsets, '\n', new LookupElement[]{selected}, file, editor, false);
+            selected.handleInsert(insertion);
+        });
     }
 
     public void testQueryDslCompletion() {

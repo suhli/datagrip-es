@@ -24,7 +24,7 @@ public final class EsSnippetDefaults {
         if (!snippet.startsWith("\"")) return snippet;
         int second = snippet.indexOf('"', 1);
         if (second > 1 && second + 1 < snippet.length() && snippet.charAt(second + 1) == ':') {
-            return snippet.substring(1, second) + snippet.substring(second + 1);
+            return snippet.substring(1);
         }
         return snippet;
     }
