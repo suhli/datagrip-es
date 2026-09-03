@@ -47,7 +47,7 @@ public final class EsClusterMetadata {
         }
         Transport.Response response = transport.execute(new Transport.Request(
                 "GET",
-                join(endpoint, "/_cat/indices?format=json&h=index,health,status,docs.count,store.size&expand_wildcards=all"),
+                EsUris.resolve(endpoint, "/_cat/indices?format=json&h=index,health,status,docs.count,store.size&expand_wildcards=all"),
                 Map.of(),
                 null));
         if (!response.successful()) {
@@ -73,7 +73,7 @@ public final class EsClusterMetadata {
     public List<NamedObject> aliases() throws IOException {
         Transport.Response response = transport.execute(new Transport.Request(
                 "GET",
-                join(endpoint, "/_cat/aliases?format=json&h=alias,index"),
+                EsUris.resolve(endpoint, "/_cat/aliases?format=json&h=alias,index"),
                 Map.of(),
                 null));
         if (!response.successful()) {
@@ -92,7 +92,7 @@ public final class EsClusterMetadata {
     public List<NamedObject> dataStreams() throws IOException {
         Transport.Response response = transport.execute(new Transport.Request(
                 "GET",
-                join(endpoint, "/_data_stream"),
+                EsUris.resolve(endpoint, "/_data_stream"),
                 Map.of(),
                 null));
         if (!response.successful()) {
@@ -118,7 +118,7 @@ public final class EsClusterMetadata {
             List<String> batch = missing.subList(offset, Math.min(offset + MAPPING_BATCH_SIZE, missing.size()));
             String path = "/" + String.join(",", batch) + "/_mapping";
             Transport.Response response = transport.execute(new Transport.Request(
-                    "GET", join(endpoint, path), Map.of(), null));
+                    "GET", EsUris.resolve(endpoint, path), Map.of(), null));
             if (!response.successful()) {
                 throw new IOException("Mapping request failed with HTTP " + response.status()
                         + " for [" + String.join(",", batch) + "]");
@@ -136,7 +136,7 @@ public final class EsClusterMetadata {
         String cached = clusterVersion;
         if (!cached.isBlank()) return cached;
         Transport.Response response = transport.execute(new Transport.Request(
-                "GET", endpoint, Map.of(), null));
+                "GET", EsUris.resolve(endpoint, "/"), Map.of(), null));
         if (!response.successful()) {
             throw new IOException("Reading cluster version failed with HTTP " + response.status());
         }
@@ -148,17 +148,6 @@ public final class EsClusterMetadata {
     public void invalidate() {
         cache.invalidate();
         clusterVersion = "";
-    }
-
-    private static URI join(URI endpoint, String path) {
-        String base = endpoint.toString();
-        if (base.endsWith("/") && path.startsWith("/")) {
-            return URI.create(base.substring(0, base.length() - 1) + path);
-        }
-        if (!base.endsWith("/") && !path.startsWith("/")) {
-            return URI.create(base + "/" + path);
-        }
-        return URI.create(base + path);
     }
 
     public record IndexInfo(

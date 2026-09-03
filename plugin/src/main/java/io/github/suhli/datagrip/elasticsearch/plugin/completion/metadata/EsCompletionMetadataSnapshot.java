@@ -14,6 +14,9 @@ public final class EsCompletionMetadataSnapshot {
     private final List<IndexObject> indices;
     private final Map<String, FieldInfo> fields;
     private final long loadedAtMillis;
+    private final boolean fieldsPartial;
+    private final int matchedTargetCount;
+    private final int loadedTargetCount;
 
     public EsCompletionMetadataSnapshot(
             String datasourceId,
@@ -21,11 +24,26 @@ public final class EsCompletionMetadataSnapshot {
             List<IndexObject> indices,
             Map<String, FieldInfo> fields,
             long loadedAtMillis) {
+        this(datasourceId, esVersion, indices, fields, loadedAtMillis, false, 0, 0);
+    }
+
+    public EsCompletionMetadataSnapshot(
+            String datasourceId,
+            String esVersion,
+            List<IndexObject> indices,
+            Map<String, FieldInfo> fields,
+            long loadedAtMillis,
+            boolean fieldsPartial,
+            int matchedTargetCount,
+            int loadedTargetCount) {
         this.datasourceId = datasourceId == null ? "" : datasourceId;
         this.esVersion = esVersion == null ? "" : esVersion;
         this.indices = List.copyOf(indices);
         this.fields = Map.copyOf(fields);
         this.loadedAtMillis = loadedAtMillis;
+        this.fieldsPartial = fieldsPartial;
+        this.matchedTargetCount = matchedTargetCount;
+        this.loadedTargetCount = loadedTargetCount;
     }
 
     public String datasourceId() { return datasourceId; }
@@ -33,6 +51,9 @@ public final class EsCompletionMetadataSnapshot {
     public List<IndexObject> indices() { return indices; }
     public Map<String, FieldInfo> fields() { return fields; }
     public long loadedAtMillis() { return loadedAtMillis; }
+    public boolean fieldsPartial() { return fieldsPartial; }
+    public int matchedTargetCount() { return matchedTargetCount; }
+    public int loadedTargetCount() { return loadedTargetCount; }
 
     public boolean isExpired(long nowMillis, long ttlMillis) {
         return loadedAtMillis <= 0 || nowMillis - loadedAtMillis > ttlMillis;

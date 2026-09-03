@@ -21,6 +21,7 @@ import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicReference;
 import java.util.function.Consumer;
+import java.util.function.LongSupplier;
 import java.util.regex.Pattern;
 
 /**
@@ -31,10 +32,12 @@ import java.util.regex.Pattern;
 public final class EsCompletionMetadataService implements Disposable {
     private static final Logger LOG = Logger.getInstance(EsCompletionMetadataService.class);
     public static final long TTL_MILLIS = 20_000L;
+    static final long RETRY_BACKOFF_MILLIS = 2_000L;
     static final int MAX_WILDCARD_MAPPING_TARGETS = 100;
 
     private final Project project;
     private final Consumer<Runnable> backgroundExecutor;
+    private final LongSupplier clock;
     private final ConcurrentHashMap<String, AtomicReference<EsCompletionMetadataSnapshot>> snapshots =
             new ConcurrentHashMap<>();
     private final ConcurrentHashMap<String, RefreshState> refreshStates = new ConcurrentHashMap<>();
@@ -43,6 +46,7 @@ public final class EsCompletionMetadataService implements Disposable {
 
     public EsCompletionMetadataService(@NotNull Project project) {
         this.project = project;
+        this.clock = System::currentTimeMillis;
         this.backgroundExecutor = runnable ->
                 ApplicationManager.getApplication().executeOnPooledThread(runnable);
         project.getMessageBus().connect(this).subscribe(DataSourceManager.TOPIC, new DataSourceManager.Listener() {
@@ -60,8 +64,13 @@ public final class EsCompletionMetadataService implements Disposable {
     }
 
     EsCompletionMetadataService(Consumer<Runnable> backgroundExecutor) {
+        this(backgroundExecutor, System::currentTimeMillis);
+    }
+
+    EsCompletionMetadataService(Consumer<Runnable> backgroundExecutor, LongSupplier clock) {
         this.project = null;
         this.backgroundExecutor = backgroundExecutor;
+        this.clock = clock;
     }
 
     public static EsCompletionMetadataService getInstance(Project project) {
@@ -109,7 +118,7 @@ public final class EsCompletionMetadataService implements Disposable {
                 snapshots.computeIfAbsent(datasourceId, id -> new AtomicReference<>(EsCompletionMetadataSnapshot.EMPTY));
         EsCompletionMetadataSnapshot current = ref.get();
         RefreshState state = refreshStates.computeIfAbsent(datasourceId, ignored -> new RefreshState());
-        if (state.targetsExpired(System.currentTimeMillis())) {
+        if (state.targetsExpired(clock.getAsLong())) {
             scheduleRefresh(datasourceId, true, List.of());
         }
         return current;
@@ -136,19 +145,22 @@ public final class EsCompletionMetadataService implements Disposable {
                         current.esVersion(),
                         modelIndices,
                         current.fields(),
-                        System.currentTimeMillis()));
+                        clock.getAsLong()));
                 current = snapshot(datasourceId);
             }
         }
         final EsCompletionMetadataSnapshot snapshot = current;
         List<String> concrete = resolveIndices(snapshot, indexPatterns);
+        int matchedTargetCount = concrete.size();
         if (concrete.size() > MAX_WILDCARD_MAPPING_TARGETS) {
             concrete = concrete.subList(0, MAX_WILDCARD_MAPPING_TARGETS);
         }
+        int loadedTargetCount = concrete.size();
+        boolean fieldsPartial = matchedTargetCount > loadedTargetCount;
         RefreshState refreshState = datasourceId == null
                 ? null
                 : refreshStates.computeIfAbsent(datasourceId, ignored -> new RefreshState());
-        long now = System.currentTimeMillis();
+        long now = clock.getAsLong();
         List<String> missing = refreshState == null ? List.of() : concrete.stream()
                 .filter(index -> refreshState.mappingExpired(index, now))
                 .toList();
@@ -156,31 +168,46 @@ public final class EsCompletionMetadataService implements Disposable {
             scheduleRefresh(datasourceId, false, missing);
         }
         if (concrete.isEmpty()) {
-            return copyWithFields(snapshot, Map.of());
+            return copyWithFields(snapshot, Map.of(), fieldsPartial, matchedTargetCount, loadedTargetCount);
         }
 
         Map<String, EsCompletionMetadataSnapshot.FieldInfo> filtered = filterFields(snapshot, concrete);
         if (!filtered.isEmpty()) {
-            return copyWithFields(snapshot, filtered);
+            return copyWithFields(snapshot, filtered, fieldsPartial, matchedTargetCount, loadedTargetCount);
         }
 
         Map<String, EsCompletionMetadataSnapshot.FieldInfo> modelFields =
                 EsDbModelFields.load(dataSource, concrete);
         if (!modelFields.isEmpty()) {
-            return copyWithFields(snapshot, modelFields);
+            return copyWithFields(snapshot, modelFields, fieldsPartial, matchedTargetCount, loadedTargetCount);
         }
-        return enrichFromModel(snapshot, dataSource, concrete);
+        EsCompletionMetadataSnapshot enriched = enrichFromModel(snapshot, dataSource, concrete);
+        return copyWithFields(
+                snapshot, enriched.fields(), fieldsPartial, matchedTargetCount, loadedTargetCount);
     }
 
     private static EsCompletionMetadataSnapshot copyWithFields(
             EsCompletionMetadataSnapshot snapshot,
             Map<String, EsCompletionMetadataSnapshot.FieldInfo> fields) {
+        return copyWithFields(snapshot, fields, snapshot.fieldsPartial(),
+                snapshot.matchedTargetCount(), snapshot.loadedTargetCount());
+    }
+
+    private static EsCompletionMetadataSnapshot copyWithFields(
+            EsCompletionMetadataSnapshot snapshot,
+            Map<String, EsCompletionMetadataSnapshot.FieldInfo> fields,
+            boolean fieldsPartial,
+            int matchedTargetCount,
+            int loadedTargetCount) {
         return new EsCompletionMetadataSnapshot(
                 snapshot.datasourceId(),
                 snapshot.esVersion(),
                 snapshot.indices(),
                 fields,
-                snapshot.loadedAtMillis());
+                snapshot.loadedAtMillis(),
+                fieldsPartial,
+                matchedTargetCount,
+                loadedTargetCount);
     }
 
     private static Map<String, EsCompletionMetadataSnapshot.FieldInfo> filterFields(
@@ -248,10 +275,11 @@ public final class EsCompletionMetadataService implements Disposable {
                 return;
             }
 
-            long attemptedAt = System.currentTimeMillis();
+            long attemptedAt = clock.getAsLong();
             List<EsCompletionMetadataSnapshot.IndexObject> targets = null;
             List<EsCompletionMetadataSnapshot.FieldInfo> fields = null;
             if (loadTargets) {
+                state.targetsLastAttemptAt = attemptedAt;
                 try {
                     try {
                         providerState.provider().refreshClusterMetadata();
@@ -259,23 +287,25 @@ public final class EsCompletionMetadataService implements Disposable {
                         LOG.debug("Elasticsearch cluster version refresh failed", versionFailure);
                     }
                     targets = providerState.provider().listTargets();
+                    state.targetsLastSuccessAt = clock.getAsLong();
                 } catch (Exception e) {
                     LOG.debug("Elasticsearch completion target refresh failed", e);
-                } finally {
-                    state.targetsLoadedAt = attemptedAt;
                 }
             }
             if (!indices.isEmpty()) {
+                for (String index : indices) state.mappingLastAttemptAt.put(index, attemptedAt);
                 try {
                     fields = providerState.provider().loadFields(indices);
+                    long succeededAt = clock.getAsLong();
+                    for (String index : indices) state.mappingLastSuccessAt.put(index, succeededAt);
                 } catch (Exception e) {
                     LOG.debug("Elasticsearch completion mapping refresh failed", e);
-                } finally {
-                    for (String index : indices) state.mappingLoadedAt.put(index, attemptedAt);
                 }
             }
             if (providers.get(datasourceId) != providerState) continue;
-            mergeRefresh(datasourceId, providerState.provider(), targets, fields, indices, attemptedAt);
+            if (targets != null || fields != null) {
+                mergeRefresh(datasourceId, providerState.provider(), targets, fields, indices, attemptedAt);
+            }
         }
     }
 
@@ -405,16 +435,22 @@ public final class EsCompletionMetadataService implements Disposable {
         private final Set<String> pendingIndices = ConcurrentHashMap.newKeySet();
         private final AtomicBoolean targetsPending = new AtomicBoolean();
         private final AtomicBoolean workerRunning = new AtomicBoolean();
-        private final ConcurrentHashMap<String, Long> mappingLoadedAt = new ConcurrentHashMap<>();
-        private volatile long targetsLoadedAt;
+        private final ConcurrentHashMap<String, Long> mappingLastAttemptAt = new ConcurrentHashMap<>();
+        private final ConcurrentHashMap<String, Long> mappingLastSuccessAt = new ConcurrentHashMap<>();
+        private volatile long targetsLastAttemptAt;
+        private volatile long targetsLastSuccessAt;
 
         private boolean targetsExpired(long now) {
-            return targetsLoadedAt <= 0 || now - targetsLoadedAt > TTL_MILLIS;
+            boolean stale = targetsLastSuccessAt <= 0 || now - targetsLastSuccessAt > TTL_MILLIS;
+            return stale && (targetsLastAttemptAt <= 0
+                    || now - targetsLastAttemptAt > RETRY_BACKOFF_MILLIS);
         }
 
         private boolean mappingExpired(String index, long now) {
-            Long loaded = mappingLoadedAt.get(index);
-            return loaded == null || now - loaded > TTL_MILLIS;
+            Long success = mappingLastSuccessAt.get(index);
+            boolean stale = success == null || now - success > TTL_MILLIS;
+            Long attempt = mappingLastAttemptAt.get(index);
+            return stale && (attempt == null || now - attempt > RETRY_BACKOFF_MILLIS);
         }
     }
 }

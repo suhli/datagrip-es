@@ -157,18 +157,18 @@ public final class EsRestCompletionContributor extends CompletionContributor {
     }
 
     private static void addQueryParams(Consumer<LookupElement> sink, EsCompletionSchema schema, EsCompletionContext ctx) {
-        EsSchemaModels.Endpoint endpoint = resolveSearchEndpoint(schema, ctx);
+        EsSchemaModels.Endpoint endpoint = resolveEndpoint(schema, ctx);
         if (endpoint == null) return;
         for (EsSchemaModels.QueryParam param : endpoint.queryParams()) {
             if (!EsSchemaAvailability.isAvailable(param, ctx.esVersion())) continue;
-            sink.accept(EsLookupFactory.queryParam(param, ctx.insideString()));
+            sink.accept(EsLookupFactory.queryParam(param, ctx.insideString(), ctx.esVersion()));
         }
     }
 
     private static void addEnumValues(Consumer<LookupElement> sink, EsCompletionSchema schema, EsCompletionContext ctx) {
         List<String> values = new ArrayList<>();
         if (ctx.expectedKind() == EsExpectedKind.QUERY_PARAMETER_VALUE) {
-            EsSchemaModels.Endpoint endpoint = resolveSearchEndpoint(schema, ctx);
+            EsSchemaModels.Endpoint endpoint = resolveEndpoint(schema, ctx);
             if (endpoint != null) {
                 for (EsSchemaModels.QueryParam param : endpoint.queryParams()) {
                     if (param.name().equals(ctx.queryParameterName())
@@ -198,7 +198,9 @@ public final class EsRestCompletionContributor extends CompletionContributor {
     private static void addBodyKeys(Consumer<LookupElement> sink, EsCompletionSchema schema, EsCompletionContext ctx) {
         if (ctx.jsonPath().isEmpty()) {
             Set<String> seen = new LinkedHashSet<>();
-            for (String key : schema.bodyRootsForEndpoint(endpointKey(ctx))) {
+            EsSchemaModels.Endpoint endpoint = resolveEndpoint(schema, ctx);
+            String endpointKey = endpoint == null ? endpointKey(ctx) : endpoint.name();
+            for (String key : schema.bodyRootsForEndpoint(endpointKey)) {
                 if (!seen.add(key)) continue;
                 EsSchemaModels.DslNode node = schema.findKey(key);
                 if (node == null) {
@@ -210,11 +212,13 @@ public final class EsRestCompletionContributor extends CompletionContributor {
                     sink.accept(EsLookupFactory.dslKey(node, ctx));
                 }
             }
-            for (String key : List.of("query", "aggs", "aggregations", "size", "from", "sort", "_source")) {
-                if (!seen.add(key)) continue;
-                EsSchemaModels.DslNode node = schema.findKey(key);
-                if (EsSchemaAvailability.isAvailable(node, ctx.esVersion())) {
-                    sink.accept(EsLookupFactory.dslKey(node, ctx));
+            if (isSearchEndpoint(endpoint, ctx.path())) {
+                for (String key : List.of("query", "aggs", "aggregations", "size", "from", "sort", "_source")) {
+                    if (!seen.add(key)) continue;
+                    EsSchemaModels.DslNode node = schema.findKey(key);
+                    if (EsSchemaAvailability.isAvailable(node, ctx.esVersion())) {
+                        sink.accept(EsLookupFactory.dslKey(node, ctx));
+                    }
                 }
             }
             return;
@@ -281,8 +285,10 @@ public final class EsRestCompletionContributor extends CompletionContributor {
         }
     }
 
-    private static EsSchemaModels.Endpoint resolveSearchEndpoint(EsCompletionSchema schema, EsCompletionContext ctx) {
-        EsSchemaModels.Endpoint endpoint = schema.findEndpointByPath(ctx.endpoint());
+    private static EsSchemaModels.Endpoint resolveEndpoint(EsCompletionSchema schema, EsCompletionContext ctx) {
+        EsCompletionSchema.ResolvedEndpoint resolved = schema.resolveEndpoint(ctx.method(), ctx.path());
+        EsSchemaModels.Endpoint endpoint = resolved == null ? null : resolved.endpoint();
+        if (endpoint == null) endpoint = schema.findEndpointByPath(ctx.endpoint());
         if (endpoint == null && ctx.path().contains("_search")) {
             endpoint = schema.findEndpointByPath("_search");
             if (endpoint == null) {
@@ -294,6 +300,12 @@ public final class EsRestCompletionContributor extends CompletionContributor {
             }
         }
         return endpoint;
+    }
+
+    private static boolean isSearchEndpoint(EsSchemaModels.Endpoint endpoint, String path) {
+        return endpoint != null
+                ? endpoint.name().contains("search")
+                : path != null && path.contains("_search");
     }
 
     private static String endpointKey(EsCompletionContext ctx) {

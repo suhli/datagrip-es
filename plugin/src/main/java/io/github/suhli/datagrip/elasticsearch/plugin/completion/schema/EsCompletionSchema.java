@@ -129,6 +129,64 @@ public final class EsCompletionSchema {
         return endpointsByAction.get(endpointPath);
     }
 
+    public ResolvedEndpoint resolveEndpoint(String method, String fullRequestPath) {
+        if (fullRequestPath == null || fullRequestPath.isBlank()) return null;
+        String actualPath = fullRequestPath.split("\\?", 2)[0];
+        String methodUpper = method == null ? "" : method.toUpperCase(Locale.ROOT);
+        ResolvedEndpoint best = null;
+        int bestStaticSegments = -1;
+        for (EsSchemaModels.Endpoint endpoint : endpoints) {
+            if (!methodUpper.isBlank() && !endpoint.methods().isEmpty()
+                    && !endpoint.methods().contains(methodUpper)) {
+                continue;
+            }
+            for (String template : endpoint.paths()) {
+                Map<String, String> parameters = matchTemplate(template, actualPath);
+                if (parameters == null) continue;
+                int staticSegments = (int) segments(template).stream()
+                        .filter(segment -> !isParameter(segment))
+                        .count();
+                if (staticSegments > bestStaticSegments) {
+                    best = new ResolvedEndpoint(endpoint, template, parameters);
+                    bestStaticSegments = staticSegments;
+                }
+            }
+        }
+        return best;
+    }
+
+    private static Map<String, String> matchTemplate(String template, String actualPath) {
+        List<String> expected = segments(template);
+        List<String> actual = segments(actualPath);
+        if (expected.size() != actual.size()) return null;
+        Map<String, String> parameters = new LinkedHashMap<>();
+        for (int i = 0; i < expected.size(); i++) {
+            String segment = expected.get(i);
+            if (isParameter(segment)) {
+                parameters.put(segment.substring(1, segment.length() - 1), actual.get(i));
+            } else if (!segment.equals(actual.get(i))) {
+                return null;
+            }
+        }
+        return Map.copyOf(parameters);
+    }
+
+    private static List<String> segments(String path) {
+        if (path == null) return List.of();
+        return List.of(path.replaceFirst("^/+", "").split("/")).stream()
+                .filter(segment -> !segment.isEmpty())
+                .toList();
+    }
+
+    private static boolean isParameter(String segment) {
+        return segment.startsWith("{") && segment.endsWith("}") && segment.length() > 2;
+    }
+
+    public record ResolvedEndpoint(
+            EsSchemaModels.Endpoint endpoint,
+            String pathTemplate,
+            Map<String, String> pathParameters) {}
+
     public static String actionableEndpoint(String pathTemplate) {
         String path = pathTemplate.startsWith("/") ? pathTemplate.substring(1) : pathTemplate;
         String[] parts = path.split("/");

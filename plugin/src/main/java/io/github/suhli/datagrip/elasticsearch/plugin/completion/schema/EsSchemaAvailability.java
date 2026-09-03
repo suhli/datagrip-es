@@ -2,6 +2,8 @@ package io.github.suhli.datagrip.elasticsearch.plugin.completion.schema;
 
 /** Central version gate for every generated completion candidate. */
 public final class EsSchemaAvailability {
+    public enum Status { AVAILABLE, DEPRECATED, UNAVAILABLE }
+
     private EsSchemaAvailability() {}
 
     public static boolean isAvailable(EsSchemaModels.Endpoint endpoint, String clusterVersion) {
@@ -17,11 +19,39 @@ public final class EsSchemaAvailability {
     }
 
     public static boolean isAvailable(String minimumVersion, String clusterVersion) {
-        if (minimumVersion == null || minimumVersion.isBlank()
-                || clusterVersion == null || clusterVersion.isBlank()) {
-            return true;
+        return status(minimumVersion, null, false, clusterVersion) != Status.UNAVAILABLE;
+    }
+
+    public static Status status(EsSchemaModels.Endpoint endpoint, String clusterVersion) {
+        return endpoint == null ? Status.UNAVAILABLE : status(
+                endpoint.minVersion(), endpoint.deprecatedVersion(), endpoint.deprecated(), clusterVersion);
+    }
+
+    public static Status status(EsSchemaModels.QueryParam parameter, String clusterVersion) {
+        return parameter == null ? Status.UNAVAILABLE : status(
+                parameter.minVersion(), parameter.deprecatedVersion(), parameter.deprecated(), clusterVersion);
+    }
+
+    public static Status status(EsSchemaModels.DslNode node, String clusterVersion) {
+        return node == null ? Status.UNAVAILABLE : status(
+                node.minVersion(), node.deprecatedVersion(), node.deprecated(), clusterVersion);
+    }
+
+    public static Status status(
+            String minimumVersion,
+            String deprecatedVersion,
+            boolean deprecated,
+            String clusterVersion) {
+        if (clusterVersion == null || clusterVersion.isBlank()) return Status.AVAILABLE;
+        if (minimumVersion != null && !minimumVersion.isBlank()
+                && compare(clusterVersion, minimumVersion) < 0) {
+            return Status.UNAVAILABLE;
         }
-        return compare(clusterVersion, minimumVersion) >= 0;
+        if (deprecatedVersion != null && !deprecatedVersion.isBlank()) {
+            return compare(clusterVersion, deprecatedVersion) >= 0
+                    ? Status.DEPRECATED : Status.AVAILABLE;
+        }
+        return deprecated ? Status.DEPRECATED : Status.AVAILABLE;
     }
 
     static int compare(String left, String right) {

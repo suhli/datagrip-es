@@ -42,7 +42,7 @@ val esSpecUrl: String = providers.gradleProperty("esSpecUrl").orElse(
     "https://raw.githubusercontent.com/elastic/elasticsearch-specification/$esSpecCommit/output/schema/schema.json"
 ).get()
 
-val schemaDir = layout.buildDirectory.dir("es-spec")
+val schemaDir = layout.buildDirectory.dir("spec-cache/$esSpecCommit")
 val schemaFile = schemaDir.map { it.file("schema.json") }
 val generatedResources = layout.buildDirectory.dir("generated/completion")
 
@@ -50,24 +50,17 @@ val downloadEsSpec by tasks.registering {
     group = "codegen"
     description = "Download pinned Elasticsearch API specification schema.json"
     inputs.property("esSpecUrl", esSpecUrl)
+    inputs.property("esSpecCommit", esSpecCommit)
     inputs.property("esSpecSha256", esSpecSha256)
     outputs.file(schemaFile)
     doLast {
         val target = schemaFile.get().asFile
         target.parentFile.mkdirs()
-        // Prefer a pre-seeded local copy to keep CI/dev builds resilient.
-        val seeded = rootProject.layout.projectDirectory.file(
-            "completion-codegen/build/tmp/schema.json"
-        ).asFile
-        if (seeded.isFile && seeded.length() > 1_000_000L) {
-            seeded.copyTo(target, overwrite = true)
-        } else {
-            val connection = URI(esSpecUrl).toURL().openConnection() as URLConnection
-            connection.connectTimeout = 60_000
-            connection.readTimeout = 180_000
-            connection.getInputStream().use { input ->
-                target.outputStream().use { output -> input.copyTo(output) }
-            }
+        val connection = URI(esSpecUrl).toURL().openConnection() as URLConnection
+        connection.connectTimeout = 60_000
+        connection.readTimeout = 180_000
+        connection.getInputStream().use { input ->
+            target.outputStream().use { output -> input.copyTo(output) }
         }
         if (esSpecSha256.isNotBlank()) {
             val digest = MessageDigest.getInstance("SHA-256")

@@ -149,6 +149,41 @@ public class EsRestCompletionFixtureTest extends BasePlatformTestCase {
         assertTrue(context.path().contains("second"));
     }
 
+    public void testMalformedNestedObjectStopsAtNextMethodToken() {
+        PsiFile file = myFixture.configureByText(EsRestFileType.INSTANCE, """
+                GET /first/_search
+                {
+                  "query": {
+                    "bool": {
+
+                GET /second/_search
+                {
+                  "query": {
+                    "term": {
+                      "<caret>"
+                    }
+                  }
+                }
+                """);
+        var context = new EsCompletionContextResolver(EsCompletionSchemaLoader.get())
+                .resolve(file, myFixture.getCaretOffset(), "", "");
+        assertEquals("/second/_search", context.path());
+        assertEquals(List.of("second"), context.indices());
+    }
+
+    public void testCreateIndexBodyDoesNotOfferSearchKeys() {
+        List<String> lookup = complete("""
+                PUT /my-index
+                {
+                  "<caret>"
+                }
+                """);
+        assertTrue("Expected generated create-index schema, got: " + lookup,
+                lookup.contains("settings") || lookup.contains("mappings") || lookup.contains("aliases"));
+        assertFalse("Non-search endpoint must not offer SearchRequest keys: " + lookup,
+                lookup.contains("query") || lookup.contains("aggs") || lookup.contains("size"));
+    }
+
     private List<String> complete(String text) {
         PsiFile file = myFixture.configureByText(EsRestFileType.INSTANCE, text);
         return EsRestCompletionContributor.lookupStringsForTest(file, myFixture.getCaretOffset());

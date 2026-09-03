@@ -6,6 +6,7 @@ import com.intellij.openapi.util.TextRange;
 import com.intellij.psi.SyntaxTraverser;
 
 import java.lang.reflect.Method;
+import java.lang.reflect.Modifier;
 
 /** Cross-version bridge for Database Tools script helpers. */
 final class EsRestScriptModelCompat {
@@ -22,12 +23,14 @@ final class EsRestScriptModelCompat {
             Condition<? super V> statement,
             Condition<? super V> batchBlock) {
         if (WHOLE_FILE_CONDITION_6 != null) {
-            return invokeWholeFileCondition(
+            Condition<V> result = invokeWholeFileCondition(
                     WHOLE_FILE_CONDITION_6, traverser, range, wsOrComment, statementSeparator, statement, batchBlock);
+            if (result != null) return result;
         }
         if (WHOLE_FILE_CONDITION_5 != null) {
-            return invokeWholeFileCondition(
+            Condition<V> result = invokeWholeFileCondition(
                     WHOLE_FILE_CONDITION_5, traverser, range, wsOrComment, statementSeparator, statement);
+            if (result != null) return result;
         }
         return node -> false;
     }
@@ -35,7 +38,18 @@ final class EsRestScriptModelCompat {
     private static Method findWholeFileConditionMethod(int parameterCount) {
         for (Method method : ScriptModelUtilCore.class.getMethods()) {
             if (!"wholeFileCondition".equals(method.getName())) continue;
-            if (method.getParameterCount() == parameterCount) return method;
+            if (!Modifier.isStatic(method.getModifiers()) || method.getParameterCount() != parameterCount) continue;
+            Class<?>[] types = method.getParameterTypes();
+            if (!types[0].isAssignableFrom(SyntaxTraverser.class)
+                    || !types[1].isAssignableFrom(TextRange.class)) continue;
+            boolean compatible = true;
+            for (int i = 2; i < types.length; i++) {
+                if (!types[i].isAssignableFrom(Condition.class)) {
+                    compatible = false;
+                    break;
+                }
+            }
+            if (compatible && Condition.class.isAssignableFrom(method.getReturnType())) return method;
         }
         return null;
     }
@@ -45,8 +59,8 @@ final class EsRestScriptModelCompat {
             Method method, Object... args) {
         try {
             return (Condition<V>) method.invoke(null, args);
-        } catch (ReflectiveOperationException e) {
-            return node -> false;
+        } catch (ReflectiveOperationException | IllegalArgumentException e) {
+            return null;
         }
     }
 }

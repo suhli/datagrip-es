@@ -105,7 +105,11 @@ public final class EsRestParserDefinition implements ParserDefinition {
             PsiBuilder builder, IElementType closing, IElementType composite) {
         PsiBuilder.Marker marker = builder.mark();
         builder.advanceLexer();
-        while (!builder.eof() && builder.getTokenType() != closing) parseToken(builder);
+        while (!builder.eof()
+                && builder.getTokenType() != closing
+                && builder.getTokenType() != EsRestTypes.METHOD) {
+            parseToken(builder);
+        }
         if (builder.getTokenType() == closing) builder.advanceLexer();
         marker.done(composite);
     }

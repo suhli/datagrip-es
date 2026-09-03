@@ -55,6 +55,24 @@ class TargetedFixesTest {
     }
 
     @Test
+    void preservesPathPrefixForEveryRequestShape() throws Exception {
+        URI endpoint = URI.create("https://localhost:9200/elasticsearch/api/");
+        assertEquals("/elasticsearch/api/", EsUris.resolve(endpoint, "/").getPath());
+        assertEquals("/elasticsearch/api/foo/_search",
+                EsUris.resolve(endpoint, "/foo/_search").getPath());
+        assertEquals("pretty=true", EsUris.resolve(endpoint, "/_mapping?pretty=true").getQuery());
+
+        RecordingTransport transport = new RecordingTransport();
+        EsJdbcUrl config = EsJdbcUrl.parse(
+                "jdbc:es-rest://localhost:9200/elasticsearch/api", new Properties());
+        EsVersion version = new EsVersion("Elasticsearch", "8.17.0", "elasticsearch", "cluster", "uuid");
+        try (Connection connection = JdbcProxies.open(config, transport, version)) {
+            assertTrue(connection.isValid(1));
+        }
+        assertEquals("/elasticsearch/api/", transport.lastUri.get().getPath());
+    }
+
+    @Test
     void validatesQueryAndNetworkTimeoutArguments() throws Exception {
         RecordingTransport transport = new RecordingTransport();
         EsJdbcUrl config = EsJdbcUrl.parse("jdbc:es-rest://localhost:9200", new Properties());
@@ -196,14 +214,68 @@ class TargetedFixesTest {
     }
 
     @Test
-    void structuredSearchDoesNotRetainRawResponse() throws Exception {
+    void structuredSearchExposesRawResponseOnce() throws Exception {
         JsonResultMapper.MappedResponse mapped = JsonResultMapper.mapResponse("""
                 {"hits":{"hits":[{"_source":{"name":"a"}}]}}
                 """);
         assertTrue(mapped.structured());
-        assertNull(mapped.rawBody());
-        assertFalse(mapped.tabular().columns().stream().anyMatch(c -> c.label().equals("_response")));
-        assertNull(mapped.tabular().rawBody());
+        assertNotNull(mapped.rawBody());
+        int raw = findColumn(mapped.tabular(), "_response");
+        assertTrue(raw >= 0);
+        assertEquals(mapped.rawBody(), mapped.tabular().rows().get(0).get(raw));
+        assertEquals(mapped.rawBody(), mapped.tabular().rawBody());
+    }
+
+    @Test
+    void searchHitsAndAggregationsNeverLoseRawResponse() throws Exception {
+        JsonResultMapper.MappedResponse mapped = JsonResultMapper.mapResponse("""
+                {"took":3,"hits":{"hits":[
+                  {"_id":"1","_source":{"status":"paid"}},
+                  {"_id":"2","_source":{"status":"open"}}
+                ]},"aggregations":{"by_status":{"buckets":[{"key":"paid","doc_count":1}]}}}
+                """);
+        int raw = findColumn(mapped.tabular(), "_response");
+        assertEquals(2, mapped.tabular().rows().size());
+        assertTrue(mapped.rawBody().contains("\"aggregations\""));
+        assertNotNull(mapped.tabular().rows().get(0).get(raw));
+        assertNull(mapped.tabular().rows().get(1).get(raw));
+    }
+
+    @Test
+    void sizeZeroAggregationsAreTabularAndEmptySearchStaysEmpty() throws Exception {
+        JsonResultMapper.MappedResponse aggregation = JsonResultMapper.mapResponse("""
+                {"hits":{"total":{"value":0},"hits":[]},"aggregations":{
+                  "by_status":{"buckets":[{"key":"paid","doc_count":4}]}}}
+                """);
+        assertEquals(1, aggregation.tabular().rows().size());
+        assertEquals("paid", aggregation.tabular().rows().get(0)
+                .get(findColumn(aggregation.tabular(), "key")));
+        assertTrue(aggregation.rawBody().contains("by_status"));
+
+        JsonResultMapper.MappedResponse empty = JsonResultMapper.mapResponse(
+                "{\"hits\":{\"total\":{\"value\":0},\"hits\":[]}}");
+        assertTrue(empty.structured());
+        assertTrue(empty.tabular().rows().isEmpty());
+        assertTrue(empty.tabular().columns().isEmpty());
+        assertNull(empty.rawBody());
+    }
+
+    @Test
+    void validatesStatementRowAndFetchLimits() throws Exception {
+        RecordingTransport transport = new RecordingTransport();
+        EsJdbcUrl config = EsJdbcUrl.parse("jdbc:es-rest://localhost:9200", new Properties());
+        EsVersion version = new EsVersion("Elasticsearch", "8.17.0", "elasticsearch", "cluster", "uuid");
+        try (Connection connection = JdbcProxies.open(config, transport, version);
+             Statement statement = connection.createStatement()) {
+            assertEquals("HY092", assertThrows(SQLException.class,
+                    () -> statement.setMaxRows(-1)).getSQLState());
+            assertEquals("HY092", assertThrows(SQLException.class,
+                    () -> statement.setLargeMaxRows(-1)).getSQLState());
+            assertEquals("HY092", assertThrows(SQLException.class,
+                    () -> statement.setLargeMaxRows((long) Integer.MAX_VALUE + 1)).getSQLState());
+            assertEquals("HY092", assertThrows(SQLException.class,
+                    () -> statement.setFetchSize(-1)).getSQLState());
+        }
     }
 
     @Test
@@ -296,8 +368,16 @@ class TargetedFixesTest {
         return indices.isEmpty() ? 0 : indices.split(",").length;
     }
 
+    private static int findColumn(TabularResult result, String label) {
+        for (int i = 0; i < result.columns().size(); i++) {
+            if (label.equals(result.columns().get(i).label())) return i;
+        }
+        return -1;
+    }
+
     private static final class RecordingTransport implements Transport {
         final AtomicInteger lastTimeoutMillis = new AtomicInteger(-1);
+        final AtomicReference<URI> lastUri = new AtomicReference<>();
 
         @Override
         public Response execute(Request request) {
@@ -307,6 +387,7 @@ class TargetedFixesTest {
         @Override
         public Response execute(Request request, ExecuteOptions options) {
             lastTimeoutMillis.set(options == null ? 0 : options.timeoutMillis());
+            lastUri.set(request.uri());
             return new Response(200, Map.of(),
                     "{\"cluster_name\":\"cluster\",\"version\":{\"number\":\"8.17.0\"},\"status\":\"green\"}");
         }

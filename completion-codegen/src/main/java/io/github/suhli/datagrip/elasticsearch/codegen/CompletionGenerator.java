@@ -4,7 +4,6 @@ import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 
 import java.nio.file.Path;
-import java.time.Instant;
 import java.util.ArrayList;
 import java.util.Comparator;
 import java.util.LinkedHashMap;
@@ -33,8 +32,9 @@ public final class CompletionGenerator {
         extractQueryDsl(types, keys);
         extractAggregations(types, keys);
         extractSearchBody(types, keys);
-        Map<String, List<String>> endpointBodyRoots = buildEndpointBodyRoots(endpoints, keys);
-        String generatedAt = Instant.now().toString();
+        Map<String, List<String>> endpointBodyRoots = extractRequestBodies(endpoints, types, keys);
+        addSearchBodyRoots(endpointBodyRoots, endpoints, keys);
+        String generatedAt = "";
         return new CompletionMetadata(
                 new ApiCompletionDocument(specVersion, generatedAt, endpoints),
                 new DslCompletionDocument(specVersion, generatedAt, keys, endpointBodyRoots));
@@ -364,9 +364,53 @@ public final class CompletionGenerator {
                 && "Field".equals(typeRefName(typeNode.path("key")));
     }
 
-    private static Map<String, List<String>> buildEndpointBodyRoots(
-            List<EndpointCompletion> endpoints, Map<String, DslKey> keys) {
+    private static Map<String, List<String>> extractRequestBodies(
+            List<EndpointCompletion> endpoints,
+            Map<String, JsonNode> types,
+            Map<String, DslKey> keys) {
         Map<String, List<String>> roots = new LinkedHashMap<>();
+        for (EndpointCompletion endpoint : endpoints) {
+            JsonNode request = types.get(endpoint.requestBodyType());
+            if (request == null) continue;
+            List<String> endpointRoots = new ArrayList<>();
+            for (JsonNode property : propertyList(request.get("body"))) {
+                String name = text(property, "name");
+                if (name.isBlank()) continue;
+                endpointRoots.add(name);
+                List<String> enums = resolveEnumValues(property.path("type"), types);
+                TypeName referenced = referencedType(property.path("type"));
+                JsonNode childType = referenced == null ? null : types.get(referenced.key());
+                List<String> children = propertyNames(childType);
+                String valueType = enums.isEmpty() ? inferValueType(property.path("type")) : "enum";
+                boolean deprecated = !property.path("deprecation").isMissingNode()
+                        && !property.path("deprecation").isNull();
+                keys.putIfAbsent(name, new DslKey(
+                        name,
+                        "request_body",
+                        List.of(endpoint.name()),
+                        children,
+                        valueType,
+                        "field".equals(name) || "fields".equals(name),
+                        enums,
+                        null,
+                        endpoint.name() + " request body",
+                        firstNonBlank(text(property.path("availability").path("stack"), "since"), null),
+                        deprecated ? firstNonBlank(
+                                text(property.path("deprecation"), "version"),
+                                text(property.path("deprecation"), "asOf")) : null,
+                        deprecated,
+                        100));
+                addChildKeys(keys, name, childType, types, "request_body");
+            }
+            if (!endpointRoots.isEmpty()) roots.put(endpoint.name(), List.copyOf(endpointRoots));
+        }
+        return roots;
+    }
+
+    private static void addSearchBodyRoots(
+            Map<String, List<String>> roots,
+            List<EndpointCompletion> endpoints,
+            Map<String, DslKey> keys) {
         List<String> searchKeys = keys.values().stream()
                 .filter(k -> "search_body".equals(k.category()))
                 .map(DslKey::key)
@@ -380,7 +424,6 @@ public final class CompletionGenerator {
         }
         roots.putIfAbsent("_search", searchKeys);
         roots.putIfAbsent("search", searchKeys);
-        return roots;
     }
 
     private static void mergeOverlay(Map<String, DslKey> keys) {

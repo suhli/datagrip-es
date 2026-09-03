@@ -5,6 +5,7 @@ import io.github.suhli.datagrip.elasticsearch.plugin.completion.model.EsCaretLoc
 import io.github.suhli.datagrip.elasticsearch.plugin.completion.model.EsCompletionContext;
 import io.github.suhli.datagrip.elasticsearch.plugin.completion.model.EsExpectedKind;
 import io.github.suhli.datagrip.elasticsearch.plugin.completion.schema.EsSchemaModels;
+import io.github.suhli.datagrip.elasticsearch.plugin.completion.schema.EsSchemaAvailability;
 
 import com.intellij.codeInsight.lookup.LookupElement;
 import com.intellij.codeInsight.lookup.LookupElementBuilder;
@@ -31,7 +32,10 @@ public final class EsLookupFactory {
                 .withPresentableText(primary)
                 .withTypeText(methods, true)
                 .withInsertHandler(new EsSnippetInsertHandler(primary, false, false));
-        double priority = endpoint.deprecated() ? 50 : 100;
+        boolean deprecated = EsSchemaAvailability.status(endpoint, context.esVersion())
+                == EsSchemaAvailability.Status.DEPRECATED;
+        builder = builder.withStrikeoutness(deprecated);
+        double priority = deprecated ? 50 : 100;
         if (!context.method().isEmpty() && !endpoint.methods().contains(context.method())) {
             priority -= 40;
         }
@@ -46,12 +50,15 @@ public final class EsLookupFactory {
                 "index".equals(index.kind()) ? 100 : 95);
     }
 
-    public static LookupElement queryParam(EsSchemaModels.QueryParam param, boolean alreadyQuoted) {
-        double priority = param.deprecated() ? 40 : 90;
+    public static LookupElement queryParam(
+            EsSchemaModels.QueryParam param, boolean alreadyQuoted, String clusterVersion) {
+        boolean deprecated = EsSchemaAvailability.status(param, clusterVersion)
+                == EsSchemaAvailability.Status.DEPRECATED;
+        double priority = deprecated ? 40 : 90;
         return PrioritizedLookupElement.withPriority(
                 LookupElementBuilder.create(param.name())
                         .withTypeText("query parameter", true)
-                        .withStrikeoutness(param.deprecated())
+                        .withStrikeoutness(deprecated)
                         .withInsertHandler(new EsSnippetInsertHandler(param.name(), alreadyQuoted, false)),
                 priority);
     }
@@ -72,7 +79,8 @@ public final class EsLookupFactory {
                 .withPresentableText(node.key())
                 .withTypeText(node.description() == null || node.description().isBlank()
                         ? node.category() : node.description(), true)
-                .withStrikeoutness(node.deprecated());
+                .withStrikeoutness(EsSchemaAvailability.status(node, context.esVersion())
+                        == EsSchemaAvailability.Status.DEPRECATED);
         if (snippet != null && !snippet.isBlank()) {
             builder = builder.withInsertHandler(new EsSnippetInsertHandler(
                     node.key(), context.insideString(), true, snippet));
@@ -81,7 +89,8 @@ public final class EsLookupFactory {
                     node.key(), context.insideString(), true));
         }
         double priority = node.priority();
-        if (node.deprecated()) priority -= 30;
+        if (EsSchemaAvailability.status(node, context.esVersion())
+                == EsSchemaAvailability.Status.DEPRECATED) priority -= 30;
         return PrioritizedLookupElement.withPriority(builder, priority);
     }
 

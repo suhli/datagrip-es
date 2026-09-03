@@ -31,8 +31,20 @@ public final class JsonResultMapper {
             JsonNode hits = root.path("hits").path("hits");
             if (hits.isArray()) {
                 List<Map<String, Object>> records = searchHits(hits);
-                // Structured success: do not retain the full raw JSON string.
-                return new MappedResponse(tabular(records), null, true);
+                if (!records.isEmpty()) {
+                    return structuredWithRaw(tabular(records), json);
+                }
+                List<Map<String, Object>> aggregations = new ArrayList<>();
+                collectBuckets("", root.path("aggregations"), aggregations);
+                if (aggregations.isEmpty() && root.path("aggregations").isObject()
+                        && !root.path("aggregations").isEmpty()) {
+                    addRecord(aggregations, flattenRecord(root.path("aggregations")));
+                }
+                if (!aggregations.isEmpty()) {
+                    return structuredWithRaw(tabular(aggregations), json);
+                }
+                // A valid empty search remains a genuine zero-row result.
+                return new MappedResponse(tabular(List.of()), null, true);
             }
         }
         List<Map<String, Object>> records = new ArrayList<>();
@@ -48,8 +60,7 @@ public final class JsonResultMapper {
         }
         TabularResult structured = tabular(records);
         if (isMeaningfulStructure(structured)) {
-            // Structured success: drop raw body to avoid double memory retention.
-            return new MappedResponse(structured, null, true);
+            return structuredWithRaw(structured, json);
         }
         String truncated = truncateRaw(json);
         return new MappedResponse(rawFallback(truncated), truncated, false);
@@ -76,6 +87,21 @@ public final class JsonResultMapper {
                 List.of(List.of(body)),
                 body,
                 false);
+    }
+
+    private static MappedResponse structuredWithRaw(TabularResult result, String json) {
+        String raw = truncateRaw(json);
+        List<TabularResult.Column> columns = new ArrayList<>(result.columns());
+        columns.add(new TabularResult.Column("_response", Types.LONGVARCHAR, "JSON"));
+        List<List<Object>> rows = new ArrayList<>(result.rows().size());
+        for (int i = 0; i < result.rows().size(); i++) {
+            List<Object> row = new ArrayList<>(result.rows().get(i));
+            // Keep one reference, not one multi-megabyte value per row.
+            row.add(i == 0 ? raw : null);
+            rows.add(row);
+        }
+        TabularResult withRaw = new TabularResult(columns, rows, raw, true);
+        return new MappedResponse(withRaw, raw, true);
     }
 
     static String truncateRaw(String json) {

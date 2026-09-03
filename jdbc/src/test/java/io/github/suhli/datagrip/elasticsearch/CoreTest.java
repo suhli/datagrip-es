@@ -224,7 +224,8 @@ class CoreTest {
                  var rows = statement.executeQuery("GET /users/_search\n{\"size\":1}")) {
                 assertTrue(rows.next());
                 assertEquals("Ada", rows.getString("name"));
-                assertFalse(hasColumn(rows, "_response"));
+                assertTrue(hasColumn(rows, "_response"));
+                assertTrue(rows.getString("_response").contains("\"hits\""));
             }
             try (var statement = connection.createStatement()) {
                 assertTrue(statement.execute("""

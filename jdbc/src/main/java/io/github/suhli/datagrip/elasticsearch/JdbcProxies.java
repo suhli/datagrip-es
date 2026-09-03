@@ -166,7 +166,7 @@ final class JdbcProxies {
                     : Math.multiplyExact(timeoutSeconds, 1000);
             Transport.ExecuteOptions options = Transport.ExecuteOptions.of(timeoutMillis);
             Transport.Response response = state.transport.execute(new Transport.Request(
-                    "GET", state.config.endpoint().resolve("/"), Map.of(), null), options);
+                    "GET", EsUris.resolve(state.config.endpoint(), "/"), Map.of(), null), options);
             return response.successful();
         } catch (InterruptedIOException e) {
             Thread.currentThread().interrupt();
@@ -236,9 +236,21 @@ final class JdbcProxies {
                 case "clearWarnings", "clearBatch" -> null;
                 case "cancel" -> { cancelRunning(); yield null; }
                 case "getWarnings" -> null;
-                case "setMaxRows" -> { maxRows = (int) args[0]; yield null; }
+                case "setMaxRows" -> {
+                    int value = (int) args[0];
+                    if (value < 0) throw invalidLimit("Statement.setMaxRows", value);
+                    maxRows = value;
+                    yield null;
+                }
                 case "getMaxRows" -> maxRows;
-                case "setLargeMaxRows" -> { maxRows = Math.toIntExact((long) args[0]); yield null; }
+                case "setLargeMaxRows" -> {
+                    long value = (long) args[0];
+                    if (value < 0 || value > Integer.MAX_VALUE) {
+                        throw invalidLimit("Statement.setLargeMaxRows", value);
+                    }
+                    maxRows = (int) value;
+                    yield null;
+                }
                 case "getLargeMaxRows" -> (long) maxRows;
                 case "setQueryTimeout" -> {
                     int seconds = (int) args[0];
@@ -249,7 +261,12 @@ final class JdbcProxies {
                     yield null;
                 }
                 case "getQueryTimeout" -> queryTimeout;
-                case "setFetchSize" -> { fetchSize = (int) args[0]; yield null; }
+                case "setFetchSize" -> {
+                    int value = (int) args[0];
+                    if (value < 0) throw invalidLimit("Statement.setFetchSize", value);
+                    fetchSize = value;
+                    yield null;
+                }
                 case "getFetchSize" -> fetchSize;
                 case "getFetchDirection" -> ResultSet.FETCH_FORWARD;
                 case "setFetchDirection" -> {
@@ -330,7 +347,7 @@ final class JdbcProxies {
                 } else {
                     JsonResultMapper.MappedResponse mapped = JsonResultMapper.mapResponse(response.body());
                     result = mapped.tabular();
-                    lastRawBody = mapped.structured() ? null : mapped.rawBody();
+                    lastRawBody = mapped.rawBody();
                 }
                 if (maxRows > 0 && result.rows().size() > maxRows) {
                     result = new TabularResult(result.columns(), result.rows().subList(0, maxRows),
@@ -480,12 +497,14 @@ final class JdbcProxies {
 
     private static URI requestUri(URI endpoint, String path) throws SQLException {
         try {
-            String base = endpoint.toASCIIString();
-            if (base.endsWith("/")) base = base.substring(0, base.length() - 1);
-            return URI.create(base + path);
+            return EsUris.resolve(endpoint, path);
         } catch (IllegalArgumentException e) {
             throw new SQLException("Invalid request path", "42000", e);
         }
+    }
+
+    private static SQLException invalidLimit(String method, long value) {
+        return new SQLException(method + " value is out of range: " + value, "HY092");
     }
 
     private static DatabaseMetaData metadata(State state) {

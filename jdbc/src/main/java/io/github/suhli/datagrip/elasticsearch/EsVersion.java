@@ -13,7 +13,7 @@ public record EsVersion(String product, String number, String distribution,
     public static EsVersion detect(Transport transport, EsJdbcUrl url) throws SQLException {
         try {
             Transport.Response response = transport.execute(new Transport.Request(
-                    "GET", url.endpoint().resolve(append(url.endpoint().getPath(), "/")), java.util.Map.of(), null));
+                    "GET", EsUris.resolve(url.endpoint(), "/"), java.util.Map.of(), null));
             if (!response.successful()) {
                 throw new SQLException("Product detection failed with HTTP " + response.status(), "08001");
             }
@@ -42,11 +42,6 @@ public record EsVersion(String product, String number, String distribution,
         } catch (IOException e) {
             throw new SQLException("Cannot detect Elasticsearch product", "08001", e);
         }
-    }
-
-    private static String append(String prefix, String path) {
-        String base = prefix == null || "/".equals(prefix) ? "" : prefix;
-        return base.endsWith("/") ? base.substring(0, base.length() - 1) + path : base + path;
     }
 
     public int major() {

@@ -102,9 +102,11 @@ GET /_cluster/health
 
 Search hits become rows containing `_index`, `_id`, `_score`, and flattened
 `_source` fields. Typical aggregation buckets, JSON objects, and arrays are
-also tabularized. Every non-empty response includes a `_response` column with
-the complete JSON payload for DataGrip's text/tree value viewer, so structured
-tabularization never discards aggregation or response metadata. Elasticsearch
+also tabularized. Every non-empty result includes a `_response` column; the
+complete payload is stored on its first row only (and oversized payloads are
+replaced by a size marker), avoiding a large copy on every hit. Thus search
+responses containing hits and aggregations retain their aggregation and
+response metadata, while `size: 0` aggregation searches remain viewable. Elasticsearch
 REST Console files use the `.esrest` extension and support method/path/JSON
 syntax highlighting and IDE code formatting.
 
@@ -161,7 +163,8 @@ instance.
 - Elasticsearch 7.x, 8.x, and 9.x.
 - OpenSearch is detected and may work for naturally compatible APIs, but is
   not reported as official Elasticsearch.
-- No automatic search pagination, SQL translation, DDL, inline data editing,
-  or multiple JDBC result sets.
+- No automatic search pagination, SQL translation, DDL, or inline data editing.
+  Multiple REST requests in one execution are exposed through JDBC
+  `getMoreResults()`.
 
 See [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md) for dependency licenses.

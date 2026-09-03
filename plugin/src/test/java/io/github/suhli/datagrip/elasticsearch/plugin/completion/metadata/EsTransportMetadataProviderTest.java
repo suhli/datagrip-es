@@ -82,7 +82,7 @@ class EsTransportMetadataProviderTest {
             authorization.set(exchange.getRequestHeaders().getFirst("Authorization"));
             String path = exchange.getRequestURI().getPath();
             String body;
-            if (path.equals("/proxy")) {
+            if (path.equals("/proxy") || path.equals("/proxy/")) {
                 body = "{\"version\":{\"number\":\"8.17.3\"}}";
             } else if (path.equals("/proxy/_cat/indices")) {
                 body = "[{\"index\":\"index-a\",\"health\":\"green\",\"status\":\"open\"}]";

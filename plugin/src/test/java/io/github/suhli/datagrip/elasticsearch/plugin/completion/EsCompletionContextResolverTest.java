@@ -282,6 +282,40 @@ class EsCompletionContextResolverTest {
     }
 
     @Test
+    void malformedPreviousObjectDoesNotCaptureNextRequest() {
+        String text = """
+                GET /a/_search
+                {
+                  "query": {
+
+                GET /b/_search
+                {
+                  "query": {
+                    "term": {
+                      \"""";
+        var ctx = new EsCompletionContextResolver(schema).resolve(text, text.length(), "", "");
+        assertEquals("/b/_search", ctx.path());
+        assertEquals(List.of("b"), ctx.indices());
+        assertEquals(EsExpectedKind.FIELD_KEY, ctx.expectedKind());
+    }
+
+    @Test
+    void malformedPreviousArrayDoesNotCaptureIncompleteNextRequest() {
+        String text = """
+                GET /a/_search
+                [
+
+                GET /b/_search
+                {
+                  "query": {
+                    "bo""";
+        var ctx = new EsCompletionContextResolver(schema).resolve(text, text.length(), "", "");
+        assertEquals("/b/_search", ctx.path());
+        assertEquals(EsExpectedKind.QUERY_DSL, ctx.expectedKind());
+        assertEquals("bo", ctx.prefix());
+    }
+
+    @Test
     void indexPrefixInUrl() {
         String text = "GET /game";
         var ctx = new EsCompletionContextResolver(schema).resolve(text, text.length(), "", "");
