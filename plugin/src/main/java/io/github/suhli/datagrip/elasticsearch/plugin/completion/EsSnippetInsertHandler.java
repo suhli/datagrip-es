@@ -1,5 +1,6 @@
 package io.github.suhli.datagrip.elasticsearch.plugin.completion;
 
+import com.intellij.codeInsight.AutoPopupController;
 import com.intellij.codeInsight.completion.InsertHandler;
 import com.intellij.codeInsight.completion.InsertionContext;
 import com.intellij.codeInsight.lookup.LookupElement;
@@ -108,6 +109,7 @@ public final class EsSnippetInsertHandler implements InsertHandler<LookupElement
         }
         document.insertString(start, result.text());
         placeCursorAfterSnippet(editor, document, start, result);
+        AutoPopupController.getInstance(context.getProject()).scheduleAutoPopup(editor);
     }
 
     private static void placeCursorAfterSnippet(
