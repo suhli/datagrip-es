@@ -29,7 +29,7 @@ class BundledDriverConfigurationTest {
         String url = artifacts.getElementsByTagName("item").item(0)
                 .getAttributes().getNamedItem("url").getNodeValue();
         assertEquals(
-                "file://$APPLICATION_PLUGINS_DIR$/datagrip-elasticsearch-rest-plugin/lib/"
+                "file://$APPLICATION_PLUGINS_DIR$/es-rest-data-source/lib/"
                         + "elasticsearch-rest-jdbc.jar",
                 url);
     }
