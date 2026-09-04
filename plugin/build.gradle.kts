@@ -87,6 +87,10 @@ intellijPlatform {
     }
     signing {
         certificateChain = providers.environmentVariable("CERTIFICATE_CHAIN")
+        // verifyPluginSignature in the 2.7.x plugin line requires a certificate file.
+        certificateChainFile.set(
+            providers.environmentVariable("CERTIFICATE_CHAIN_FILE").map(::file),
+        )
         privateKey = providers.environmentVariable("PRIVATE_KEY")
         password = providers.environmentVariable("PRIVATE_KEY_PASSWORD")
     }

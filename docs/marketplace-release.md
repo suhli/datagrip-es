@@ -165,6 +165,7 @@ Linux or macOS:
 
 ```bash
 export CERTIFICATE_CHAIN="$(cat .local/marketplace-signing/chain.crt)"
+export CERTIFICATE_CHAIN_FILE="$PWD/.local/marketplace-signing/chain.crt"
 export PRIVATE_KEY="$(cat .local/marketplace-signing/private.pem)"
 unset PRIVATE_KEY_PASSWORD
 ./gradlew :plugin:signPlugin :plugin:verifyPluginSignature
@@ -174,6 +175,7 @@ Windows PowerShell:
 
 ```powershell
 $env:CERTIFICATE_CHAIN = Get-Content ".local/marketplace-signing/chain.crt" -Raw
+$env:CERTIFICATE_CHAIN_FILE = (Resolve-Path ".local/marketplace-signing/chain.crt")
 $env:PRIVATE_KEY = Get-Content ".local/marketplace-signing/private.pem" -Raw
 Remove-Item Env:PRIVATE_KEY_PASSWORD -ErrorAction SilentlyContinue
 .\gradlew.bat :plugin:signPlugin :plugin:verifyPluginSignature

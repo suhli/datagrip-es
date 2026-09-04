@@ -73,6 +73,24 @@ jobs:
             exit 1
           fi
 
+      - name: Prepare certificate file for signature verification
+        env:
+          CERTIFICATE_CHAIN: ${{ secrets.CERTIFICATE_CHAIN }}
+        shell: bash
+        run: |
+          CERTIFICATE_CHAIN_FILE="$RUNNER_TEMP/marketplace-signing-chain.crt"
+          if [[ "$CERTIFICATE_CHAIN" == *"-----BEGIN CERTIFICATE-----"* ]]; then
+            printf '%s' "$CERTIFICATE_CHAIN" > "$CERTIFICATE_CHAIN_FILE"
+          else
+            printf '%s' "$CERTIFICATE_CHAIN" | base64 --decode > "$CERTIFICATE_CHAIN_FILE"
+          fi
+          if ! grep -q -- "-----BEGIN CERTIFICATE-----" "$CERTIFICATE_CHAIN_FILE"; then
+            echo "CERTIFICATE_CHAIN must contain a PEM certificate or its Base64 encoding."
+            exit 1
+          fi
+          chmod 600 "$CERTIFICATE_CHAIN_FILE"
+          echo "CERTIFICATE_CHAIN_FILE=$CERTIFICATE_CHAIN_FILE" >> "$GITHUB_ENV"
+
       - name: Test and verify plugin
         run: ./gradlew test verifyPlugin --no-configuration-cache --console=plain
 
