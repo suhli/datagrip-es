@@ -1,0 +1,26 @@
+# Minimal configuration for the local Marketplace signing helper.
+[ req ]
+default_bits = 4096
+default_md = sha256
+prompt = yes
+distinguished_name = distinguished_name
+x509_extensions = v3_ca
+
+[ distinguished_name ]
+countryName = Country Name (2 letter code)
+countryName_min = 2
+countryName_max = 2
+stateOrProvinceName = State or Province Name
+localityName = Locality Name
+organizationName = Organization Name
+organizationalUnitName = Organizational Unit Name
+commonName = Common Name
+commonName_max = 64
+emailAddress = Email Address
+emailAddress_max = 255
+
+[ v3_ca ]
+basicConstraints = critical,CA:true
+keyUsage = critical,digitalSignature,keyCertSign,cRLSign
+subjectKeyIdentifier = hash
+authorityKeyIdentifier = keyid:always,issuer

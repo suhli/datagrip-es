@@ -4,6 +4,8 @@
 out/
 *.iml
 .env
+.env.local
+.local/marketplace-signing/
 bin
 .vscode/settings.json
 .intellijPlatform

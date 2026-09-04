@@ -54,19 +54,22 @@ jobs:
         env:
           CERTIFICATE_CHAIN: ${{ secrets.CERTIFICATE_CHAIN }}
           PRIVATE_KEY: ${{ secrets.PRIVATE_KEY }}
-          PRIVATE_KEY_PASSWORD: ${{ secrets.PRIVATE_KEY_PASSWORD }}
-          PUBLISH_TOKEN: ${{ secrets.PUBLISH_TOKEN }}
-          PUBLISH_TO_MARKETPLACE: ${{ inputs.publish_to_marketplace }}
         shell: bash
         run: |
-          for secret in CERTIFICATE_CHAIN PRIVATE_KEY PRIVATE_KEY_PASSWORD; do
-            if [[ -z "${!secret}" ]]; then
-              echo "Missing required signing secret: $secret"
-              exit 1
-            fi
-          done
-          if [[ "$PUBLISH_TO_MARKETPLACE" == "true" && -z "$PUBLISH_TOKEN" ]]; then
-            echo "PUBLISH_TOKEN is required when publishing to Marketplace"
+          if [[ -z "$CERTIFICATE_CHAIN" || -z "$PRIVATE_KEY" ]]; then
+            echo "Marketplace signing secrets are not configured."
+            echo "Set CERTIFICATE_CHAIN and PRIVATE_KEY before running this workflow."
+            exit 1
+          fi
+
+      - name: Verify Marketplace publishing token
+        if: ${{ inputs.publish_to_marketplace }}
+        env:
+          PUBLISH_TOKEN: ${{ secrets.PUBLISH_TOKEN }}
+        shell: bash
+        run: |
+          if [[ -z "$PUBLISH_TOKEN" ]]; then
+            echo "PUBLISH_TOKEN is required when publishing to Marketplace."
             exit 1
           fi
 
@@ -78,7 +81,13 @@ jobs:
           CERTIFICATE_CHAIN: ${{ secrets.CERTIFICATE_CHAIN }}
           PRIVATE_KEY: ${{ secrets.PRIVATE_KEY }}
           PRIVATE_KEY_PASSWORD: ${{ secrets.PRIVATE_KEY_PASSWORD }}
-        run: ./gradlew buildPlugin signPlugin verifyPluginSignature --no-configuration-cache --console=plain
+        shell: bash
+        run: |
+          # The signer password is optional for an unencrypted private.pem.
+          if [[ -z "$PRIVATE_KEY_PASSWORD" ]]; then
+            unset PRIVATE_KEY_PASSWORD
+          fi
+          ./gradlew buildPlugin signPlugin verifyPluginSignature --no-configuration-cache --console=plain
 
       - name: Locate signed distribution
         id: signed_zip
@@ -108,4 +117,9 @@ jobs:
           PRIVATE_KEY: ${{ secrets.PRIVATE_KEY }}
           PRIVATE_KEY_PASSWORD: ${{ secrets.PRIVATE_KEY_PASSWORD }}
           PUBLISH_TOKEN: ${{ secrets.PUBLISH_TOKEN }}
-        run: ./gradlew publishPlugin --no-configuration-cache --console=plain
+        shell: bash
+        run: |
+          if [[ -z "$PRIVATE_KEY_PASSWORD" ]]; then
+            unset PRIVATE_KEY_PASSWORD
+          fi
+          ./gradlew publishPlugin --no-configuration-cache --console=plain
