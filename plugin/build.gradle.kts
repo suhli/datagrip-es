@@ -132,6 +132,11 @@ tasks.buildSearchableOptions {
     enabled = false
 }
 
+tasks.named("verifyPluginSignature") {
+    // Gradle 8.13 validates that the signed ZIP is produced before verification.
+    dependsOn(tasks.named("signPlugin"))
+}
+
 fun loadDotEnv(file: File): Map<String, String> {
     if (!file.isFile) return emptyMap()
     return file.readLines()
