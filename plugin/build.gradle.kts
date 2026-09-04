@@ -1,5 +1,7 @@
 import org.jetbrains.intellij.platform.gradle.IntelliJPlatformType
+import org.jetbrains.intellij.platform.gradle.tasks.SignPluginTask
 import org.jetbrains.intellij.platform.gradle.tasks.VerifyPluginTask
+import org.jetbrains.intellij.platform.gradle.tasks.VerifyPluginSignatureTask
 
 plugins {
     java
@@ -85,15 +87,6 @@ intellijPlatform {
             untilBuild = provider { null }
         }
     }
-    signing {
-        certificateChain = providers.environmentVariable("CERTIFICATE_CHAIN")
-        // verifyPluginSignature in the 2.7.x plugin line requires a certificate file.
-        certificateChainFile.set(
-            layout.file(providers.environmentVariable("CERTIFICATE_CHAIN_FILE").map(::file)),
-        )
-        privateKey = providers.environmentVariable("PRIVATE_KEY")
-        password = providers.environmentVariable("PRIVATE_KEY_PASSWORD")
-    }
     publishing {
         token = providers.environmentVariable("PUBLISH_TOKEN")
         channels = providers.gradleProperty("pluginVersion").map { version ->
@@ -139,6 +132,20 @@ tasks.buildSearchableOptions {
 tasks.named("verifyPluginSignature") {
     // Gradle 8.13 validates that the signed ZIP is produced before verification.
     dependsOn(tasks.named("signPlugin"))
+}
+
+tasks.named<SignPluginTask>("signPlugin") {
+    certificateChain.set(providers.environmentVariable("CERTIFICATE_CHAIN"))
+    privateKey.set(providers.environmentVariable("PRIVATE_KEY"))
+    password.set(providers.environmentVariable("PRIVATE_KEY_PASSWORD"))
+}
+
+tasks.named<VerifyPluginSignatureTask>("verifyPluginSignature") {
+    // In 2.7.x, certificateChain takes precedence over certificateChainFile.
+    // Keep certificate text scoped to signPlugin and verify with the prepared file.
+    certificateChainFile.set(
+        layout.file(providers.environmentVariable("CERTIFICATE_CHAIN_FILE").map(::file)),
+    )
 }
 
 fun loadDotEnv(file: File): Map<String, String> {
